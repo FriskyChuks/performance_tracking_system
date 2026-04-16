@@ -1,4 +1,4 @@
-# # engagement/admin.py
+# engagement/admin.py
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
@@ -39,11 +39,12 @@ class AnonymousCommenterAdmin(admin.ModelAdmin):
         return f"{obj.comments.count()} total comments"
     comment_count_display.short_description = 'Comment Statistics'
 
+
 @admin.register(ProjectImage)
 class ProjectImageAdmin(admin.ModelAdmin):
     list_display = ['id', 'project_link', 'image_preview', 'caption_short', 'is_primary', 'uploaded_by_display', 'created_at']
     list_filter = ['is_primary', 'created_at']
-    search_fields = ['caption', 'project__outcome']
+    search_fields = ['caption', 'project__title', 'project__code']
     readonly_fields = ['created_at', 'image_preview_large']
     ordering = ['-is_primary', '-created_at']
     
@@ -61,9 +62,9 @@ class ProjectImageAdmin(admin.ModelAdmin):
     )
     
     def project_link(self, obj):
-        url = reverse('admin:main_project_change', args=[obj.project.id])
-        return format_html('<a href="{}" style="font-weight: bold;">{}</a>', url, obj.project.outcome[:50])
-    project_link.short_description = 'Project'
+        url = reverse('admin:main_projectinitiative_change', args=[obj.project.id])
+        return format_html('<a href="{}" style="font-weight: bold;">{}</a>', url, obj.project.title[:50])
+    project_link.short_description = 'Project/Initiative'
     
     def caption_short(self, obj):
         return obj.caption[:50] + '...' if len(obj.caption) > 50 else obj.caption
@@ -91,6 +92,8 @@ class ProjectImageAdmin(admin.ModelAdmin):
     
     def set_as_primary(self, request, queryset):
         for image in queryset:
+            # Remove primary from other images in same project
+            ProjectImage.objects.filter(project=image.project).update(is_primary=False)
             image.is_primary = True
             image.save()
         self.message_user(request, f'{queryset.count()} images set as primary.')
@@ -100,6 +103,7 @@ class ProjectImageAdmin(admin.ModelAdmin):
         updated = queryset.update(is_primary=False)
         self.message_user(request, f'{updated} images removed from primary.')
     remove_primary.short_description = 'Remove primary status'
+
 
 class CommentReactionInline(admin.TabularInline):
     model = CommentReaction
@@ -111,6 +115,7 @@ class CommentReactionInline(admin.TabularInline):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('user', 'anonymous_user')
+
 
 @admin.register(ProjectComment)
 class ProjectCommentAdmin(admin.ModelAdmin):
@@ -139,16 +144,21 @@ class ProjectCommentAdmin(admin.ModelAdmin):
     )
     
     def project_link(self, obj):
-        url = reverse('admin:main_project_change', args=[obj.project.id])
-        return format_html('<a href="{}" style="font-weight: bold;">{}</a>', url, obj.project.outcome[:50])
-    project_link.short_description = 'Project'
+        url = reverse('admin:main_projectinitiative_change', args=[obj.project.id])
+        return format_html('<a href="{}" style="font-weight: bold;">{}</a>', url, obj.project.title[:50])
+    project_link.short_description = 'Project/Initiative'
     
     def author_display(self, obj):
         if obj.user:
-            staff_badge = ' <span style="background-color: #22c55e; color: white; padding: 2px 4px; border-radius: 4px; font-size: 9px;">STAFF</span>' if obj.user.is_staff else ''
-            return format_html('<span style="color: #22c55e; font-weight: bold;">👤 {}{}</span>', obj.user.full_name, staff_badge)
+            if obj.user.is_staff:
+                # Use format_html to properly render HTML
+                return format_html(
+                    '<span style="color: #22c55e; font-weight: bold;">👤 {}</span> <span style="background-color: #22c55e; color: white; padding: 2px 6px; border-radius: 12px; font-size: 10px; margin-left: 4px;">STAFF</span>',
+                    obj.user.full_name
+                )
+            return format_html('<span style="color: #3b82f6; font-weight: bold;">👤 {}</span>', obj.user.full_name)
         elif obj.anonymous_user:
-            return format_html('<span style="color: #f59e0b;">🔒 {}</span>', obj.anonymous_user.display_name)
+            return format_html('<span style="color: #f59e0b; font-weight: bold;">🔒 {}</span>', obj.anonymous_user.display_name)
         return 'Unknown'
     author_display.short_description = 'Author'
     
@@ -179,10 +189,18 @@ class ProjectCommentAdmin(admin.ModelAdmin):
         if not reactions:
             return 'No reactions yet'
         
-        html = '<div style="display: flex; gap: 10px; flex-wrap: wrap;">'
+        reaction_icons = {
+            'agree': '👍',
+            'disagree': '👎',
+            'like': '❤️',
+            'helpful': '💡',
+            'report': '🚩'
+        }
+        
+        html = '<div style="display: flex; gap: 8px; flex-wrap: wrap;">'
         for reaction in reactions:
-            emoji = '👍' if reaction['reaction_type'] == 'agree' else '👎' if reaction['reaction_type'] == 'disagree' else '💡' if reaction['reaction_type'] == 'helpful' else '🚩'
-            html += f'<span style="background-color: #f3f4f6; padding: 4px 8px; border-radius: 8px;">{emoji} {reaction["count"]}</span>'
+            icon = reaction_icons.get(reaction['reaction_type'], '📌')
+            html += f'<span style="background-color: #f3f4f6; padding: 4px 8px; border-radius: 8px; font-size: 12px;">{icon} {reaction["count"]}</span>'
         html += '</div>'
         return format_html(html)
     reaction_stats.short_description = 'Reaction Statistics'
@@ -212,6 +230,7 @@ class ProjectCommentAdmin(admin.ModelAdmin):
         queryset.delete()
         self.message_user(request, f'{count} comments were successfully deleted.')
     delete_selected_comments.short_description = 'Delete selected comments'
+
 
 @admin.register(CommentReaction)
 class CommentReactionAdmin(admin.ModelAdmin):
@@ -246,6 +265,7 @@ class CommentReactionAdmin(admin.ModelAdmin):
             return format_html('<span style="color: #f59e0b;">🔒 {}</span>', obj.anonymous_user.display_name)
         return 'Unknown'
     user_display.short_description = 'User'
+
 
 # Custom admin site configuration
 admin.site.site_header = 'PTS Engagement Portal Admin'

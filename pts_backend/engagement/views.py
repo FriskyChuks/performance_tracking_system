@@ -8,66 +8,101 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from rest_framework.parsers import MultiPartParser, FormParser
 
-from main.models import Project
-from .models import AnonymousCommenter, ProjectComment, CommentReaction,ProjectImage
+from main.models import ProjectInitiative
+from .models import AnonymousCommenter, ProjectComment, CommentReaction, ProjectImage
 from .serializers import (
     ProjectCommentSerializer, PublicProjectSerializer, 
-    ProjectImageSerializer, AnonymousCommenterSerializer, ProjectImageUploadSerializer, ProjectImageSerializer
+    ProjectImageSerializer, AnonymousCommenterSerializer, ProjectImageUploadSerializer
 )
 import uuid
 
 User = get_user_model()
 
+# engagement/views.py - Update PublicProjectListView
+
 class PublicProjectListView(generics.ListAPIView):
-    """List all projects for public view"""
+    """List all initiatives/projects for public view"""
     serializer_class = PublicProjectSerializer
     permission_classes = [AllowAny]
     
     def get_queryset(self):
-        queryset = Project.objects.all()
+        queryset = ProjectInitiative.objects.all().prefetch_related('images', 'comments')
         
+        # Filter by year (from start_date)
         year = self.request.query_params.get('year')
         if year:
-            queryset = queryset.filter(year=year)
+            queryset = queryset.filter(start_date__year=year)
         
-        ministry = self.request.query_params.get('ministry')
-        if ministry:
-            queryset = queryset.filter(deliverable__priority_area__ministry__title__icontains=ministry)
+        # Filter by department
+        department = self.request.query_params.get('department')
+        if department:
+            queryset = queryset.filter(department_id=department)
         
+        # Filter by agency
+        agency = self.request.query_params.get('agency')
+        if agency:
+            queryset = queryset.filter(agency_id=agency)
+        
+        # Filter by status
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        # Search
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
-                Q(outcome__icontains=search) |
-                Q(indicator__icontains=search)
+                Q(title__icontains=search) |
+                Q(description__icontains=search) |
+                Q(code__icontains=search)
             )
         
         order_by = self.request.query_params.get('order_by', '-created_at')
         queryset = queryset.order_by(order_by)
         
         return queryset
+    
+    def list(self, request, *args, **kwargs):
+        """Override list to pass request context to serializer"""
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True, context={'request': request})
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
 
+# engagement/views.py - Update PublicProjectDetailView
 class PublicProjectDetailView(generics.RetrieveAPIView):
-    """Get single project with all details"""
-    queryset = Project.objects.all()
+    """Get single initiative/project with all details"""
+    queryset = ProjectInitiative.objects.all().prefetch_related('images', 'comments')
     serializer_class = PublicProjectSerializer
     permission_classes = [AllowAny]
     lookup_field = 'id'
+    
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, context={'request': request})
+        return Response(serializer.data)
 
 class ProjectCommentListView(generics.ListCreateAPIView):
-    """List and create comments for a project"""
+    """List and create comments for an initiative/project"""
     serializer_class = ProjectCommentSerializer
     permission_classes = [AllowAny]
     
     def get_queryset(self):
-        project_id = self.kwargs.get('project_id')
+        initiative_id = self.kwargs.get('initiative_id')
         return ProjectComment.objects.filter(
-            project_id=project_id, 
+            project_id=initiative_id, 
             parent__isnull=True
         ).select_related('user', 'anonymous_user')
     
     def create(self, request, *args, **kwargs):
-        project_id = self.kwargs.get('project_id')
-        project = get_object_or_404(Project, id=project_id)
+        initiative_id = self.kwargs.get('initiative_id')
+        initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
         
         user = None
         anonymous_user = None
@@ -93,7 +128,6 @@ class ProjectCommentListView(generics.ListCreateAPIView):
         # Apply rate limiting for anonymous users
         if not user:
             from django.utils import timezone
-            from datetime import timedelta
             
             today = timezone.now().date()
             comments_today = ProjectComment.objects.filter(
@@ -109,7 +143,7 @@ class ProjectCommentListView(generics.ListCreateAPIView):
         
         # Create the comment
         comment = ProjectComment.objects.create(
-            project=project,
+            project=initiative,
             user=user,
             anonymous_user=anonymous_user,
             content=request.data.get('content'),
@@ -221,7 +255,6 @@ def get_rate_limit(request):
         return Response({'remaining': 3, 'reset_time': None})
     
     from django.utils import timezone
-    from datetime import timedelta
     
     today = timezone.now().date()
     anonymous_user = AnonymousCommenter.objects.filter(session_id=session_id).first()
@@ -244,23 +277,25 @@ def get_rate_limit(request):
     return Response({'remaining': 3, 'reset_time': None})
 
 
+# ==================== Image Management Views ====================
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def upload_project_image(request, project_id):
-    """Upload an image for a project"""
+def upload_initiative_image(request, initiative_id):
+    """Upload an image for an initiative/project"""
     try:
-        project = Project.objects.get(id=project_id)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        initiative = ProjectInitiative.objects.get(id=initiative_id)
+    except ProjectInitiative.DoesNotExist:
+        return Response({'error': 'Initiative not found'}, status=status.HTTP_404_NOT_FOUND)
     
     # Check if user has permission
     if not (request.user.is_staff or request.user.is_superuser):
         return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
     
-    # Check image limit (max 4 images per project)
-    current_images = project.images.count()
+    # Check image limit (max 4 images per initiative)
+    current_images = initiative.images.count()
     if current_images >= 4:
-        return Response({'error': 'Maximum 4 images allowed per project'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'Maximum 4 images allowed per initiative'}, status=status.HTTP_400_BAD_REQUEST)
     
     serializer = ProjectImageUploadSerializer(data=request.data)
     if serializer.is_valid():
@@ -268,7 +303,7 @@ def upload_project_image(request, project_id):
         is_primary = current_images == 0
         
         image = serializer.save(
-            project=project,
+            project=initiative,
             uploaded_by=request.user,
             is_primary=is_primary
         )
@@ -280,8 +315,8 @@ def upload_project_image(request, project_id):
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
-def delete_project_image(request, image_id):
-    """Delete a project image"""
+def delete_initiative_image(request, image_id):
+    """Delete an initiative image"""
     try:
         image = ProjectImage.objects.get(id=image_id)
     except ProjectImage.DoesNotExist:
@@ -308,7 +343,7 @@ def delete_project_image(request, image_id):
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def set_primary_image(request, image_id):
-    """Set an image as the primary image for its project"""
+    """Set an image as the primary image for its initiative"""
     try:
         image = ProjectImage.objects.get(id=image_id)
     except ProjectImage.DoesNotExist:
@@ -329,13 +364,13 @@ def set_primary_image(request, image_id):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
-def get_project_images(request, project_id):
-    """Get all images for a project"""
+def get_initiative_images(request, initiative_id):
+    """Get all images for an initiative/project"""
     try:
-        project = Project.objects.get(id=project_id)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        initiative = ProjectInitiative.objects.get(id=initiative_id)
+    except ProjectInitiative.DoesNotExist:
+        return Response({'error': 'Initiative not found'}, status=status.HTTP_404_NOT_FOUND)
     
-    images = project.images.all()
+    images = initiative.images.all()
     serializer = ProjectImageSerializer(images, many=True, context={'request': request})
     return Response(serializer.data)

@@ -1,38 +1,60 @@
 // src/components/Management/DeliverableManagement.jsx
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, X, Save, Package, Target, TrendingUp, AlertCircle, Search } from 'lucide-react';
-import { deliverables, priorityAreas, ministries } from '../../services/api';
+import { Plus, Edit, Trash2, X, Save, Package, Target, TrendingUp, AlertCircle, Search, Building2, Landmark, Layers } from 'lucide-react';
+import mainApi from '../../services/mainApi';
+import accountsApi from '../../services/accountsApi';
 import toast from 'react-hot-toast';
 
 const DeliverableManagement = () => {
   const [deliverablesList, setDeliverablesList] = useState([]);
   const [priorityAreasList, setPriorityAreasList] = useState([]);
-  const [ministriesList, setMinistriesList] = useState([]);
+  const [departmentsList, setDepartmentsList] = useState([]);
+  const [agenciesList, setAgenciesList] = useState([]);
+  const [initiativesList, setInitiativesList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
-  const [formData, setFormData] = useState({ title: '', priority_area: '' });
+  const [formData, setFormData] = useState({ name: '', priority_area: '' });
   const [submitting, setSubmitting] = useState(false);
-  const [filters, setFilters] = useState({ ministry: '', priority_area: '' });
+  const [filters, setFilters] = useState({ department: '', agency: '', priority_area: '' });
   const [searchTerm, setSearchTerm] = useState('');
+  const [entityType, setEntityType] = useState('department');
+
+  // Destructure API methods
+  const { deliverables, priorityAreas, departments, agencies, initiatives } = mainApi;
 
   useEffect(() => {
     fetchData();
-  }, [filters.ministry, filters.priority_area]);
+  }, [filters.department, filters.agency, filters.priority_area]);
 
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [deliverablesRes, priorityAreasRes, ministriesRes] = await Promise.all([
+      
+      // Fetch priority areas based on department/agency filter
+      let priorityParams = {};
+      if (filters.department) {
+        priorityParams.department = filters.department;
+      } else if (filters.agency) {
+        priorityParams.agency = filters.agency;
+      }
+      
+      const [deliverablesRes, priorityAreasRes, departmentsRes, agenciesRes, initiativesRes] = await Promise.all([
         deliverables.list(filters.priority_area ? { priority_area: filters.priority_area } : {}),
-        priorityAreas.list(filters.ministry ? { ministry: filters.ministry } : {}),
-        ministries.list()
+        priorityAreas.list(priorityParams),
+        departments.list(),
+        agencies.list(),
+        initiatives.list()
       ]);
+      
+      const allInitiatives = initiativesRes.data.results || initiativesRes.data;
+      setInitiativesList(allInitiatives);
       setDeliverablesList(deliverablesRes.data);
       setPriorityAreasList(priorityAreasRes.data);
-      setMinistriesList(ministriesRes.data);
+      setDepartmentsList(departmentsRes.data);
+      setAgenciesList(agenciesRes.data);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Failed to fetch data');
@@ -44,10 +66,10 @@ const DeliverableManagement = () => {
   const handleOpenModal = (item = null) => {
     if (item) {
       setEditingItem(item);
-      setFormData({ title: item.title, priority_area: item.priority_area });
+      setFormData({ name: item.name, priority_area: item.priority_area });
     } else {
       setEditingItem(null);
-      setFormData({ title: '', priority_area: filters.priority_area || '' });
+      setFormData({ name: '', priority_area: filters.priority_area || '' });
     }
     setShowModal(true);
   };
@@ -63,6 +85,10 @@ const DeliverableManagement = () => {
     setSubmitting(true);
     try {
       await deliverables.delete(itemToDelete.id);
+      await accountsApi.logActivity({ 
+        action: 'delete', 
+        description: `Deleted deliverable: ${itemToDelete.name}` 
+      });
       toast.success('Deliverable deleted successfully');
       fetchData();
       setShowDeleteModal(false);
@@ -77,8 +103,8 @@ const DeliverableManagement = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.title.trim()) {
-      toast.error('Deliverable title is required');
+    if (!formData.name.trim()) {
+      toast.error('Deliverable name is required');
       return;
     }
     if (!formData.priority_area) {
@@ -90,41 +116,57 @@ const DeliverableManagement = () => {
     try {
       if (editingItem) {
         await deliverables.update(editingItem.id, formData);
+        await accountsApi.logActivity({ 
+          action: 'update', 
+          description: `Updated deliverable: ${formData.name}` 
+        });
         toast.success('Deliverable updated successfully');
       } else {
         await deliverables.create(formData);
+        await accountsApi.logActivity({ 
+          action: 'create', 
+          description: `Created deliverable: ${formData.name}` 
+        });
         toast.success('Deliverable created successfully');
       }
       fetchData();
       setShowModal(false);
       setEditingItem(null);
-      setFormData({ title: '', priority_area: '' });
+      setFormData({ name: '', priority_area: '' });
     } catch (error) {
       console.error('Error saving deliverable:', error);
-      toast.error(error.response?.data?.title?.[0] || 'Failed to save deliverable');
+      toast.error(error.response?.data?.name?.[0] || 'Failed to save deliverable');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const getInitiativeCountForDeliverable = (deliverableId) => {
+    return initiativesList.filter(initiative => 
+      initiative.deliverables && initiative.deliverables.includes(deliverableId)
+    ).length;
+  };
+
   const getPriorityAreaTitle = (priorityAreaId) => {
     const area = priorityAreasList.find(a => a.id === priorityAreaId);
-    return area ? area.title : 'Unknown';
+    return area ? area.name : 'Unknown';
   };
 
   const filteredDeliverables = deliverablesList.filter(deliverable =>
-    deliverable.title.toLowerCase().includes(searchTerm.toLowerCase())
+    deliverable.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const getTotalProjects = () => {
-    return deliverablesList.reduce((sum, d) => sum + (d.projects_count || 0), 0);
+  const getTotalInitiatives = () => {
+    return deliverablesList.reduce((sum, d) => sum + getInitiativeCountForDeliverable(d.id), 0);
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
-        <p className="text-gray-500">Loading deliverables...</p>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+          <p className="text-gray-500">Loading deliverables...</p>
+        </div>
       </div>
     );
   }
@@ -146,7 +188,7 @@ const DeliverableManagement = () => {
           
           <button
             onClick={() => handleOpenModal()}
-            className="px-3 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium shadow-sm transition-all duration-200 flex items-center gap-1.5 text-sm"
+            className="px-3 py-2 rounded-lg bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-medium shadow-sm transition-all duration-200 flex items-center gap-1.5 text-sm"
           >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Add</span>
@@ -165,15 +207,15 @@ const DeliverableManagement = () => {
           <div className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
             <TrendingUp className="w-4 h-4 text-green-600" />
             <div>
-              <p className="text-lg font-bold text-gray-900 leading-tight">{getTotalProjects()}</p>
-              <p className="text-xs text-gray-500">Projects</p>
+              <p className="text-lg font-bold text-gray-900 leading-tight">{getTotalInitiatives()}</p>
+              <p className="text-xs text-gray-500">Initiatives</p>
             </div>
           </div>
           <div className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
             <Target className="w-4 h-4 text-green-600" />
             <div>
               <p className="text-lg font-bold text-gray-900 leading-tight">{priorityAreasList.length}</p>
-              <p className="text-xs text-gray-500">Areas</p>
+              <p className="text-xs text-gray-500">Priority Areas</p>
             </div>
           </div>
         </div>
@@ -185,33 +227,60 @@ const DeliverableManagement = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
-            placeholder="Search..."
+            placeholder="Search deliverables..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full px-4 py-2 pl-9 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm"
           />
         </div>
         
-        <select
-          value={filters.ministry}
-          onChange={(e) => setFilters({ ministry: e.target.value, priority_area: '' })}
-          className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm bg-white"
-        >
-          <option value="">All Ministries</option>
-          {ministriesList.map(ministry => (
-            <option key={ministry.id} value={ministry.id}>{ministry.title}</option>
-          ))}
-        </select>
+        <div className="flex gap-2">
+          <select
+            value={entityType}
+            onChange={(e) => {
+              setEntityType(e.target.value);
+              setFilters({ department: '', agency: '', priority_area: '' });
+            }}
+            className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm bg-white"
+          >
+            <option value="department">By Department</option>
+            <option value="agency">By Agency</option>
+          </select>
+          
+          {entityType === 'department' ? (
+            <select
+              value={filters.department}
+              onChange={(e) => setFilters({ department: e.target.value, agency: '', priority_area: '' })}
+              className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm bg-white min-w-[150px]"
+            >
+              <option value="">All Departments</option>
+              {departmentsList.map(dept => (
+                <option key={dept.id} value={dept.id}>{dept.name}</option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={filters.agency}
+              onChange={(e) => setFilters({ agency: e.target.value, department: '', priority_area: '' })}
+              className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm bg-white min-w-[150px]"
+            >
+              <option value="">All Agencies</option>
+              {agenciesList.map(agency => (
+                <option key={agency.id} value={agency.id}>{agency.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
         
         <select
           value={filters.priority_area}
           onChange={(e) => setFilters({ ...filters, priority_area: e.target.value })}
-          className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm bg-white disabled:opacity-50"
-          disabled={!filters.ministry}
+          className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm bg-white min-w-[150px]"
+          disabled={!filters.department && !filters.agency}
         >
-          <option value="">All Areas</option>
+          <option value="">All Priority Areas</option>
           {priorityAreasList.map(area => (
-            <option key={area.id} value={area.id}>{area.title}</option>
+            <option key={area.id} value={area.id}>{area.name}</option>
           ))}
         </select>
       </div>
@@ -224,12 +293,12 @@ const DeliverableManagement = () => {
           </div>
           <h3 className="text-base font-medium text-gray-900 mb-1">No deliverables found</h3>
           <p className="text-sm text-gray-500 mb-3">
-            {searchTerm || filters.ministry || filters.priority_area ? 'Try adjusting your filters' : 'Get started by creating your first deliverable'}
+            {searchTerm || filters.department || filters.agency || filters.priority_area ? 'Try adjusting your filters' : 'Get started by creating your first deliverable'}
           </p>
-          {!searchTerm && !filters.ministry && !filters.priority_area && (
+          {!searchTerm && !filters.department && !filters.agency && !filters.priority_area && (
             <button
               onClick={() => handleOpenModal()}
-              className="inline-flex items-center gap-1.5 bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm hover:bg-green-700 transition"
+              className="inline-flex items-center gap-1.5 bg-gradient-to-r from-green-600 to-green-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm hover:shadow-md transition"
             >
               <Plus className="w-4 h-4" />
               Add Deliverable
@@ -238,56 +307,62 @@ const DeliverableManagement = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredDeliverables.map((deliverable) => (
-            <div
-              key={deliverable.id}
-              className="group bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-all duration-200"
-            >
-              <div className="bg-gradient-to-r from-green-600 to-green-700 px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <Package className="w-5 h-5 text-white" />
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => handleOpenModal(deliverable)}
-                      className="p-1 rounded bg-white/20 hover:bg-white/30 text-white transition text-xs"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteClick(deliverable)}
-                      className="p-1 rounded bg-white/20 hover:bg-red-500 text-white transition text-xs"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="p-4">
-                <h3 className="text-base font-bold text-gray-900 mb-1 line-clamp-2">{deliverable.title}</h3>
-                <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-2">
-                  <Target className="w-3 h-3" />
-                  <span>{getPriorityAreaTitle(deliverable.priority_area)}</span>
-                </div>
-                <div className="flex items-center gap-3 text-xs text-gray-500">
-                  <div className="flex items-center gap-1">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>{deliverable.projects_count || 0} projects</span>
+          {filteredDeliverables.map((deliverable) => {
+            const initiativeCount = getInitiativeCountForDeliverable(deliverable.id);
+            return (
+              <div
+                key={deliverable.id}
+                className="group bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-all duration-200"
+              >
+                <div className="bg-gradient-to-r from-green-600 to-green-700 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <Package className="w-5 h-5 text-white" />
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleOpenModal(deliverable)}
+                        className="p-1 rounded bg-white/20 hover:bg-white/30 text-white transition text-xs"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteClick(deliverable)}
+                        className="p-1 rounded bg-white/20 hover:bg-red-500 text-white transition text-xs"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 
-                <div className="mt-3 pt-3 border-t border-gray-100">
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-gray-500">Progress</span>
-                    <span className="text-gray-700 font-medium">30%</span>
+                <div className="p-4">
+                  <h3 className="text-base font-bold text-gray-900 mb-1 line-clamp-2">{deliverable.name}</h3>
+                  <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-2">
+                    <Target className="w-3 h-3" />
+                    <span>{getPriorityAreaTitle(deliverable.priority_area)}</span>
                   </div>
-                  <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-green-600 to-green-500 rounded-full" style={{ width: '30%' }}></div>
+                  <div className="flex items-center gap-3 text-xs text-gray-500">
+                    <div className="flex items-center gap-1">
+                      <Layers className="w-3 h-3" />
+                      <span>{initiativeCount} initiative{initiativeCount !== 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="text-gray-500">Target</span>
+                      <span className="text-gray-700 font-medium">{deliverable.target_value || '—'} {deliverable.unit || ''}</span>
+                    </div>
+                    {deliverable.deadline && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-500">Deadline</span>
+                        <span className="text-gray-700">{new Date(deliverable.deadline).toLocaleDateString()}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -324,21 +399,21 @@ const DeliverableManagement = () => {
                 >
                   <option value="">Select Priority Area</option>
                   {priorityAreasList.map(area => (
-                    <option key={area.id} value={area.id}>{area.title}</option>
+                    <option key={area.id} value={area.id}>{area.name}</option>
                   ))}
                 </select>
               </div>
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Deliverable Title *
+                  Deliverable Name *
                 </label>
                 <input
                   type="text"
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none text-sm"
-                  placeholder="e.g., Hospital Construction"
+                  placeholder="e.g., Reduce Carbon Emissions by 30%"
                   autoFocus
                 />
               </div>
@@ -354,7 +429,7 @@ const DeliverableManagement = () => {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition flex items-center gap-1.5 text-sm shadow-sm"
+                  className="px-4 py-1.5 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg font-medium transition flex items-center gap-1.5 text-sm shadow-sm"
                 >
                   {submitting ? (
                     <>
@@ -389,10 +464,10 @@ const DeliverableManagement = () => {
             
             <div className="p-5">
               <p className="text-gray-700 text-sm mb-2">
-                Are you sure you want to delete <span className="font-semibold text-gray-900">"{itemToDelete.title}"</span>?
+                Are you sure you want to delete <span className="font-semibold text-gray-900">"{itemToDelete.name}"</span>?
               </p>
               <p className="text-xs text-gray-500 mb-5">
-                This action cannot be undone. Associated projects will also be deleted.
+                This action cannot be undone. Associated initiatives will also be affected.
               </p>
               
               <div className="flex justify-end gap-2">
@@ -405,7 +480,7 @@ const DeliverableManagement = () => {
                 <button
                   onClick={handleConfirmDelete}
                   disabled={submitting}
-                  className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition flex items-center gap-1.5 text-sm shadow-sm"
+                  className="px-4 py-1.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-lg font-medium transition flex items-center gap-1.5 text-sm shadow-sm"
                 >
                   {submitting ? (
                     <>

@@ -47,7 +47,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-     'accounts.middleware.DashboardAccessMiddleware', # Add this
+    'accounts.middleware.ActivityLogMiddleware',  # Add this
+    'accounts.middleware.DashboardAccessMiddleware',  # Add this
 ]
 
 ROOT_URLCONF = 'pts_backend.urls'

@@ -1,8 +1,50 @@
+✅ COMPLETED SO FAR
+Backend (Django)
+
+    Unified User System - PublicUser merged with accounts.User
+    User Groups & Permissions - Role-based access control
+    Engagement Models - Comments, reactions, images with unified User
+    ProjectInitiative Model - Unified Projects and Programs
+    Department & Agency Models - Replaced Ministry structure
+    Priority Area & Deliverable Models - Hierarchical tracking
+    Location Tracking - Latitude, longitude, address fields
+    Image Upload API - Multiple images per initiative
+    Activity Logging - User action tracking
+    Rate Limiting - Anonymous user restrictions
+
+Frontend - Dashboard
+
+    Premium UI - Glassmorphism design, sidebar, topnav
+    Initiative Management - Create, edit, delete, view
+    Department & Agency Management - Full CRUD
+    Priority Area & Deliverable Management - Full CRUD
+    Location Picker - Map + manual entry with instructions
+    Image Upload - Drag & drop, gallery view
+    Reports - PDF/Excel export
+    User Management - Admin user upgrade interface
+    Settings - Profile, security, notifications
+    Activity Log - User activity display
+
+Frontend - Public Portal
+
+    Public Layout - With authentication awareness
+    Project Listing - Search, filters, grid view
+    Project Detail - Full view with images, map, comments
+    Comment System - Nested replies, reactions
+    Anonymous Commenting - With rate limiting
+    Location Display - Interactive map, directions
+    Image Gallery - Full-screen viewer
+
+
+--------------------------------------------------------------------------------------------------------
+
 THINGS TO DISCUSS WITH STAKE HOLDERS
 1. Project Name
 2. Project flow
 3. Who does what and at what point?
 4. At what point are reports approved marked as complete and readonly
+
+---------------------------------------------------------------------------------------------------------
 
 src/
 ├── components/
@@ -38,6 +80,7 @@ src/
 ├── App.jsx
 └── main.jsx
 
+-----------------------------------------------------------------------------------------------------------------------
 
 EXPLAINATION
 1. Priority Areas are the areas of focus within a ministry.
@@ -70,9 +113,56 @@ NEW UPDATE ON REQUIREMENTS:
 Hey DS, there seem to be a shift. I did not quite get clients requirements completely. 
 Now this project is for ministry of Environment, so needless having a dropdown to select a ministry when creating a project. Its a software for Federal Ministry of Environment.
 
+A. PROJECTS
 So a project is tied to the following order:
 1. Tied to a depart Department (e.g Forestry, Climate change etc) or an Agency(e.g NOSDRA,) 
 2. Could be Project (package projects or sponsored projects by World Bank, EU, UN etc) or a Programs(here we define the )
 
 So we do not need a ministry form in the frontend, we need to create the following models:
 Departments --> Agencies --> Projects --> Programs
+NOTE
+a. We also need to tie coordinates to a project, such that when a citizen clicks the image (or project title), the loaction (map) can be seen, directions to the eact place can be obtained
+b. performance_historics (performance history) and target_historics(target history) are simply computed from history op previous data
+
+
+B. PRIORITY AREAS
+For each priority area, there are metrics (deliverables) to be achieved
+
+--------------------------------------------------------------------------------------------------------------------------
+PROJECT ADJUSTMENT
+The requirements have been made clearer:
+1. Each projectinitiative focuses on a PriorityArea and has one or more Delierables (already captured)
+2. Each deliverable has a base_line value, target value, actual value per quarter. This means that a project milstone is captured per quarter. 
+3. The target and actual values are per deliverable. This means that for each deliverale, we have a target value and an actual value.
+If the Initiative was setup with 3 deliverable, then we shall have 3 target_values and 3 actual values.
+4. At the end of the 4th quarter, the system auto computes the annual values and the mean value.
+
+ROLE BASED DUTIES
+Hi DS, we need some more adjustments, having created user groups, its time we use them.
+We have 4 basic user groups I am not sure the names of two groups but we can give the place holder names for now. I'll describe their functions.
+1. ProjectAdmin => they create/setup the Initiations. At the point of creation, some fields would be invisible to them on that initiation form. The 'actual_value' (Actual) should be disabled/hidden at creation. The image field should also be unavailable.
+The performance assessment should also not be available to him. 
+
+2. Staff (Placeholder name for now) => They are the real field workers whose duty it is to act on created ProjectInitiations. They update the project status, the Actual value (under performance metrics) and the image. They upload the actual image as seen on site.
+They do not have create project privilege, can only update by filling the specified fields. Other fields are readoly to them.
+
+3. The Directors => They approve projects completed by the Staff before it is submitted. Their action marks a project as completed/done. After acting on a project, the staff can no longer act on it. They view project as readonly, simply approve.
+
+4. Sector Experts => They are responsible for scoring/assessing the ProjectInitiatives after submission. Their only business is the assessment portion. We may have to create a project assesment model because they have more inputs to do.
+They check options like
+ - Data not available (where data was not provided by the department or agency)
+ - Data Not accurate (Data was provided but the expert deems it inacurate based on verifiable evidence)
+ - Data not verifiable (data was provided but can not be verified by the expert)
+ - Efforts towards achieving goals (%) (Experts scores the depart/agency's efforts towards achieving the stated goal)
+ - Comments/performance comment
+
+ NOTE
+ I think the performance_rating should be automated, calculated as a funtion of the actual_value / target_value.
+ However. we shall also add such field to the Initiative Assessment model for the sector expert
+
+
+ UPDATES
+ 1. HOMEPAGE: Use deliverables in the features section with images
+ 2. Use image for the home page --> possibly carousel
+ 3. 
+ 

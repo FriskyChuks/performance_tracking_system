@@ -8,6 +8,7 @@ import {
   UserX,
   Shield,
   Building2,
+  Landmark,
   Mail,
   Calendar,
   ChevronRight,
@@ -22,8 +23,8 @@ import {
   Trash2,
   UserPlus
 } from 'lucide-react';
-import { adminApi } from '../../services/adminApi';
-import { ministries } from '../../services/api';
+import accountsApi from '../../services/accountsApi';
+import mainApi from '../../services/mainApi';
 import toast from 'react-hot-toast';
 
 const UserManagement = () => {
@@ -34,25 +35,29 @@ const UserManagement = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [groups, setGroups] = useState([]);
-  const [ministriesList, setMinistriesList] = useState([]);
+  const [departmentsList, setDepartmentsList] = useState([]);
+  const [agenciesList, setAgenciesList] = useState([]);
+  const [assignmentType, setAssignmentType] = useState('department'); // 'department' or 'agency'
   const [upgradeForm, setUpgradeForm] = useState({
     group_id: '',
-    ministry_id: ''
+    department_id: '',
+    agency_id: ''
   });
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     fetchData();
     fetchGroups();
-    fetchMinistries();
+    fetchDepartments();
+    fetchAgencies();
   }, []);
 
   const fetchData = async () => {
     setLoading(true);
     try {
       const [allUsersRes, pendingUsersRes] = await Promise.all([
-        adminApi.getAllUsers(),
-        adminApi.getPendingUsers()
+        accountsApi.getAllUsers(),
+        accountsApi.getPendingUsers()
       ]);
       setUsers(allUsersRes.data);
       setPendingUsers(pendingUsersRes.data);
@@ -66,19 +71,28 @@ const UserManagement = () => {
 
   const fetchGroups = async () => {
     try {
-      const response = await adminApi.getGroups();
+      const response = await accountsApi.getGroups();
       setGroups(response.data);
     } catch (error) {
       console.error('Error fetching groups:', error);
     }
   };
 
-  const fetchMinistries = async () => {
+  const fetchDepartments = async () => {
     try {
-      const response = await ministries.list();
-      setMinistriesList(response.data);
+      const response = await mainApi.departments.list();
+      setDepartmentsList(response.data);
     } catch (error) {
-      console.error('Error fetching ministries:', error);
+      console.error('Error fetching departments:', error);
+    }
+  };
+
+  const fetchAgencies = async () => {
+    try {
+      const response = await mainApi.agencies.list();
+      setAgenciesList(response.data);
+    } catch (error) {
+      console.error('Error fetching agencies:', error);
     }
   };
 
@@ -90,17 +104,20 @@ const UserManagement = () => {
 
     setSubmitting(true);
     try {
-      await adminApi.upgradeUser(selectedUser.id, {
+      const upgradeData = {
         group_id: upgradeForm.group_id,
-        ministry_id: upgradeForm.ministry_id
-      });
+        department_id: upgradeForm.department_id || null,
+        agency_id: upgradeForm.agency_id || null
+      };
+      
+      await accountsApi.upgradeUser(selectedUser.id, upgradeData);
       
       const selectedGroup = groups.find(g => g.id === parseInt(upgradeForm.group_id));
       toast.success(`${selectedUser.full_name} has been upgraded to ${selectedGroup?.name || 'Dashboard User'}`);
       
       setShowUpgradeModal(false);
       setSelectedUser(null);
-      setUpgradeForm({ group_id: '', ministry_id: '' });
+      setUpgradeForm({ group_id: '', department_id: '', agency_id: '' });
       fetchData();
     } catch (error) {
       console.error('Error upgrading user:', error);
@@ -147,6 +164,25 @@ const UserManagement = () => {
     return configs[userType] || configs.public;
   };
 
+  const getAssignedEntityDisplay = (user) => {
+    if (user.assigned_entity_type === 'department' && user.assigned_entity_name) {
+      return (
+        <div className="flex items-center gap-1">
+          <Building2 className="w-3 h-3 text-blue-500" />
+          <span className="text-sm text-gray-600">{user.assigned_entity_name}</span>
+        </div>
+      );
+    } else if (user.assigned_entity_type === 'agency' && user.assigned_entity_name) {
+      return (
+        <div className="flex items-center gap-1">
+          <Landmark className="w-3 h-3 text-purple-500" />
+          <span className="text-sm text-gray-600">{user.assigned_entity_name}</span>
+        </div>
+      );
+    }
+    return <span className="text-sm text-gray-400">—</span>;
+  };
+
   const filteredUsers = users.filter(user => 
     user.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.email?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -182,6 +218,12 @@ const UserManagement = () => {
                 <button
                   onClick={() => {
                     setSelectedUser(user);
+                    setUpgradeForm({
+                      group_id: user.group_id || '',
+                      department_id: user.assigned_entity_type === 'department' ? user.assigned_entity_id : '',
+                      agency_id: user.assigned_entity_type === 'agency' ? user.assigned_entity_id : ''
+                    });
+                    setAssignmentType(user.assigned_entity_type === 'agency' ? 'agency' : 'department');
                     setShowUpgradeModal(true);
                   }}
                   className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded-lg transition flex items-center gap-1"
@@ -223,7 +265,7 @@ const UserManagement = () => {
                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">User</th>
                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">Role</th>
                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">Group</th>
-                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">Ministry</th>
+                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">Department/Agency</th>
                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">Status</th>
                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">Joined</th>
                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600">Actions</th>
@@ -268,8 +310,8 @@ const UserManagement = () => {
                       <td className="py-3 px-4 text-sm text-gray-600">
                         {user.group || '-'}
                       </td>
-                      <td className="py-3 px-4 text-sm text-gray-600">
-                        {user.ministry_name || '-'}
+                      <td className="py-3 px-4">
+                        {getAssignedEntityDisplay(user)}
                       </td>
                       <td className="py-3 px-4">
                         {user.is_active ? (
@@ -294,8 +336,10 @@ const UserManagement = () => {
                               setSelectedUser(user);
                               setUpgradeForm({
                                 group_id: user.group_id || '',
-                                ministry_id: user.ministry_id || ''
+                                department_id: user.assigned_entity_type === 'department' ? user.assigned_entity_id : '',
+                                agency_id: user.assigned_entity_type === 'agency' ? user.assigned_entity_id : ''
                               });
+                              setAssignmentType(user.assigned_entity_type === 'agency' ? 'agency' : 'department');
                               setShowUpgradeModal(true);
                             }}
                             className="px-3 py-1 bg-primary-600 hover:bg-primary-700 text-white text-xs rounded-lg transition flex items-center gap-1"
@@ -310,8 +354,10 @@ const UserManagement = () => {
                               setSelectedUser(user);
                               setUpgradeForm({
                                 group_id: user.group_id || '',
-                                ministry_id: user.ministry_id || ''
+                                department_id: user.assigned_entity_type === 'department' ? user.assigned_entity_id : '',
+                                agency_id: user.assigned_entity_type === 'agency' ? user.assigned_entity_id : ''
                               });
+                              setAssignmentType(user.assigned_entity_type === 'agency' ? 'agency' : 'department');
                               setShowUpgradeModal(true);
                             }}
                             className="px-3 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50 text-xs rounded-lg transition"
@@ -368,19 +414,69 @@ const UserManagement = () => {
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Assign Ministry (Optional)
+                  Assignment Type
                 </label>
-                <select
-                  value={upgradeForm.ministry_id}
-                  onChange={(e) => setUpgradeForm({ ...upgradeForm, ministry_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
-                >
-                  <option value="">No ministry assigned</option>
-                  {ministriesList.map(ministry => (
-                    <option key={ministry.id} value={ministry.id}>{ministry.title}</option>
-                  ))}
-                </select>
+                <div className="flex gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setAssignmentType('department')}
+                    className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                      assignmentType === 'department' 
+                        ? 'bg-primary-600 text-white' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Building2 className="w-3.5 h-3.5 inline mr-1" />
+                    Department
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssignmentType('agency')}
+                    className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                      assignmentType === 'agency' 
+                        ? 'bg-primary-600 text-white' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Landmark className="w-3.5 h-3.5 inline mr-1" />
+                    Agency
+                  </button>
+                </div>
               </div>
+              
+              {assignmentType === 'department' ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Assign Department (Optional)
+                  </label>
+                  <select
+                    value={upgradeForm.department_id}
+                    onChange={(e) => setUpgradeForm({ ...upgradeForm, department_id: e.target.value, agency_id: '' })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
+                  >
+                    <option value="">No department assigned</option>
+                    {departmentsList.map(dept => (
+                      <option key={dept.id} value={dept.id}>{dept.name}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Assign Agency (Optional)
+                  </label>
+                  <select
+                    value={upgradeForm.agency_id}
+                    onChange={(e) => setUpgradeForm({ ...upgradeForm, agency_id: e.target.value, department_id: '' })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
+                  >
+                    <option value="">No agency assigned</option>
+                    {agenciesList.map(agency => (
+                      <option key={agency.id} value={agency.id}>{agency.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               
               <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700 flex items-start gap-2">
                 <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />

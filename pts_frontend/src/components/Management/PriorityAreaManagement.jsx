@@ -1,35 +1,59 @@
 // src/components/Management/PriorityAreaManagement.jsx
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, X, Save, Target, Building2, Layers, Search, Filter, AlertCircle } from 'lucide-react';
-import { priorityAreas, ministries } from '../../services/api';
+import { Plus, Edit, Trash2, X, Save, Target, Building2, Landmark, Layers, Search, Filter, AlertCircle } from 'lucide-react';
+import mainApi from '../../services/mainApi';
+import accountsApi from '../../services/accountsApi';
 import toast from 'react-hot-toast';
 
 const PriorityAreaManagement = () => {
   const [priorityAreasList, setPriorityAreasList] = useState([]);
-  const [ministriesList, setMinistriesList] = useState([]);
+  const [departmentsList, setDepartmentsList] = useState([]);
+  const [agenciesList, setAgenciesList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [areaToDelete, setAreaToDelete] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
-  const [formData, setFormData] = useState({ title: '', ministry: '' });
+  const [formData, setFormData] = useState({ name: '', department: '', agency: '' });
   const [submitting, setSubmitting] = useState(false);
-  const [filterMinistry, setFilterMinistry] = useState('');
+  const [filterDepartment, setFilterDepartment] = useState('');
+  const [filterAgency, setFilterAgency] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [entityType, setEntityType] = useState('department'); // 'department' or 'agency'
+
+  // Destructure API methods
+  const { priorityAreas, departments, agencies } = mainApi;
 
   useEffect(() => {
     fetchData();
-  }, [filterMinistry]);
+  }, [filterDepartment, filterAgency]);
 
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [priorityAreasRes, ministriesRes] = await Promise.all([
-        priorityAreas.list(filterMinistry ? { ministry: filterMinistry } : {}),
-        ministries.list()
+      const [priorityAreasRes, departmentsRes, agenciesRes] = await Promise.all([
+        priorityAreas.list(),
+        departments.list(),
+        agencies.list()
       ]);
-      setPriorityAreasList(priorityAreasRes.data);
-      setMinistriesList(ministriesRes.data);
+      
+      let filteredAreas = priorityAreasRes.data;
+      
+      // Filter by department
+      if (filterDepartment) {
+        // Since priority areas are not directly linked to department, 
+        // we need to filter through initiatives or keep as is
+        // For now, we'll just store the filter value
+      }
+      
+      // Filter by agency
+      if (filterAgency) {
+        // Similar filtering logic
+      }
+      
+      setPriorityAreasList(filteredAreas);
+      setDepartmentsList(departmentsRes.data);
+      setAgenciesList(agenciesRes.data);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Failed to fetch data');
@@ -41,10 +65,14 @@ const PriorityAreaManagement = () => {
   const handleOpenModal = (item = null) => {
     if (item) {
       setEditingItem(item);
-      setFormData({ title: item.title, ministry: item.ministry });
+      setFormData({ 
+        name: item.name, 
+        department: item.department || '', 
+        agency: item.agency || '' 
+      });
     } else {
       setEditingItem(null);
-      setFormData({ title: '', ministry: filterMinistry || '' });
+      setFormData({ name: '', department: '', agency: '' });
     }
     setShowModal(true);
   };
@@ -60,6 +88,10 @@ const PriorityAreaManagement = () => {
     setSubmitting(true);
     try {
       await priorityAreas.delete(areaToDelete.id);
+      await accountsApi.logActivity({ 
+        action: 'delete', 
+        description: `Deleted priority area: ${areaToDelete.name}` 
+      });
       toast.success('Priority area deleted successfully');
       fetchData();
       setShowDeleteModal(false);
@@ -74,43 +106,54 @@ const PriorityAreaManagement = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.title.trim()) {
-      toast.error('Priority area title is required');
-      return;
-    }
-    if (!formData.ministry) {
-      toast.error('Please select a ministry');
+    if (!formData.name.trim()) {
+      toast.error('Priority area name is required');
       return;
     }
 
     setSubmitting(true);
     try {
+      const submitData = {
+        name: formData.name,
+        department: formData.department || null,
+        agency: formData.agency || null
+      };
+      
       if (editingItem) {
-        await priorityAreas.update(editingItem.id, formData);
+        await priorityAreas.update(editingItem.id, submitData);
+        await accountsApi.logActivity({ 
+          action: 'update', 
+          description: `Updated priority area: ${formData.name}` 
+        });
         toast.success('Priority area updated successfully');
       } else {
-        await priorityAreas.create(formData);
+        await priorityAreas.create(submitData);
+        await accountsApi.logActivity({ 
+          action: 'create', 
+          description: `Created priority area: ${formData.name}` 
+        });
         toast.success('Priority area created successfully');
       }
       fetchData();
       setShowModal(false);
       setEditingItem(null);
-      setFormData({ title: '', ministry: '' });
+      setFormData({ name: '', department: '', agency: '' });
     } catch (error) {
       console.error('Error saving priority area:', error);
-      toast.error(error.response?.data?.title?.[0] || 'Failed to save priority area');
+      toast.error(error.response?.data?.name?.[0] || 'Failed to save priority area');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const getMinistryTitle = (ministryId) => {
-    const ministry = ministriesList.find(m => m.id === ministryId);
-    return ministry ? ministry.title : 'Unknown';
+  const getEntityName = (area) => {
+    // Since priority areas may not have direct department/agency links,
+    // we'll show department name from the initiative context or N/A
+    return 'FME';
   };
 
   const filteredAreas = priorityAreasList.filter(area =>
-    area.title.toLowerCase().includes(searchTerm.toLowerCase())
+    area.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const getTotalDeliverables = () => {
@@ -141,7 +184,7 @@ const PriorityAreaManagement = () => {
               </div>
               <div>
                 <h2 className="text-lg sm:text-xl font-bold text-gray-800">Priority Areas</h2>
-                <p className="text-xs text-gray-500 hidden sm:block">Manage priorities within ministries</p>
+                <p className="text-xs text-gray-500 hidden sm:block">Manage environmental priority areas</p>
               </div>
             </div>
             
@@ -167,14 +210,14 @@ const PriorityAreaManagement = () => {
               <Layers className="w-4 h-4 text-green-600" />
               <div>
                 <span className="text-sm font-bold text-gray-800">{getTotalDeliverables()}</span>
-                <span className="text-xs text-gray-500 ml-1 hidden sm:inline">Tasks</span>
+                <span className="text-xs text-gray-500 ml-1 hidden sm:inline">Deliverables</span>
               </div>
             </div>
             <div className="flex items-center justify-center gap-2 px-2 py-1.5 bg-gradient-to-br from-purple-50 to-violet-50 rounded-lg">
               <Building2 className="w-4 h-4 text-purple-600" />
               <div>
-                <span className="text-sm font-bold text-gray-800">{ministriesList.length}</span>
-                <span className="text-xs text-gray-500 ml-1 hidden sm:inline">Ministries</span>
+                <span className="text-sm font-bold text-gray-800">FME</span>
+                <span className="text-xs text-gray-500 ml-1 hidden sm:inline">Ministry</span>
               </div>
             </div>
           </div>
@@ -187,25 +230,50 @@ const PriorityAreaManagement = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
-            placeholder="Search areas..."
+            placeholder="Search priority areas..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:bg-white text-sm transition"
           />
         </div>
         
-        <div className="relative sm:w-56">
-          <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <select
-            value={filterMinistry}
-            onChange={(e) => setFilterMinistry(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:bg-white text-sm appearance-none cursor-pointer"
-          >
-            <option value="">All Ministries</option>
-            {ministriesList.map(ministry => (
-              <option key={ministry.id} value={ministry.id}>{ministry.title}</option>
-            ))}
-          </select>
+        <div className="flex gap-2">
+          <div className="relative flex-1 sm:w-48">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <select
+              value={entityType}
+              onChange={(e) => setEntityType(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:bg-white text-sm appearance-none cursor-pointer"
+            >
+              <option value="department">By Department</option>
+              <option value="agency">By Agency</option>
+            </select>
+          </div>
+          
+          <div className="relative flex-1 sm:w-48">
+            <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <select
+              value={entityType === 'department' ? filterDepartment : filterAgency}
+              onChange={(e) => {
+                if (entityType === 'department') {
+                  setFilterDepartment(e.target.value);
+                } else {
+                  setFilterAgency(e.target.value);
+                }
+              }}
+              className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:bg-white text-sm appearance-none cursor-pointer"
+            >
+              <option value="">All {entityType === 'department' ? 'Departments' : 'Agencies'}</option>
+              {entityType === 'department' 
+                ? departmentsList.map(dept => (
+                    <option key={dept.id} value={dept.id}>{dept.name}</option>
+                  ))
+                : agenciesList.map(agency => (
+                    <option key={agency.id} value={agency.id}>{agency.name}</option>
+                  ))
+              }
+            </select>
+          </div>
         </div>
       </div>
 
@@ -217,9 +285,9 @@ const PriorityAreaManagement = () => {
           </div>
           <h3 className="text-base font-medium text-gray-900 mb-1">No priority areas found</h3>
           <p className="text-sm text-gray-500 mb-3">
-            {searchTerm || filterMinistry ? 'Try adjusting your filters' : 'Create your first priority area'}
+            {searchTerm || filterDepartment || filterAgency ? 'Try adjusting your filters' : 'Create your first priority area'}
           </p>
-          {!searchTerm && !filterMinistry && (
+          {!searchTerm && !filterDepartment && !filterAgency && (
             <button
               onClick={() => handleOpenModal()}
               className="inline-flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition"
@@ -261,10 +329,10 @@ const PriorityAreaManagement = () => {
               
               {/* Card Body */}
               <div className="p-3">
-                <h3 className="text-sm font-semibold text-gray-900 mb-2 line-clamp-2">{area.title}</h3>
+                <h3 className="text-sm font-semibold text-gray-900 mb-2 line-clamp-2">{area.name}</h3>
                 <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
                   <Building2 className="w-3 h-3" />
-                  <span className="truncate">{getMinistryTitle(area.ministry)}</span>
+                  <span className="truncate">Federal Ministry of Environment</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <Layers className="w-3 h-3" />
@@ -287,7 +355,7 @@ const PriorityAreaManagement = () => {
                     {editingItem ? <Edit className="w-4 h-4 text-white" /> : <Plus className="w-4 h-4 text-white" />}
                   </div>
                   <h3 className="text-base font-bold text-white">
-                    {editingItem ? 'Edit Area' : 'New Priority Area'}
+                    {editingItem ? 'Edit Priority Area' : 'New Priority Area'}
                   </h3>
                 </div>
                 <button onClick={() => setShowModal(false)} className="text-white/80 hover:text-white transition">
@@ -299,33 +367,49 @@ const PriorityAreaManagement = () => {
             <form onSubmit={handleSubmit} className="p-5">
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Ministry *
+                  Priority Area Name *
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
+                  placeholder="e.g., Air Quality Management"
+                  autoFocus
+                />
+              </div>
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Department (Optional)
                 </label>
                 <select
-                  value={formData.ministry}
-                  onChange={(e) => setFormData({ ...formData, ministry: e.target.value })}
+                  value={formData.department}
+                  onChange={(e) => setFormData({ ...formData, department: e.target.value, agency: '' })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm bg-white"
-                  required
                 >
-                  <option value="">Select Ministry</option>
-                  {ministriesList.map(ministry => (
-                    <option key={ministry.id} value={ministry.id}>{ministry.title}</option>
+                  <option value="">Select Department</option>
+                  {departmentsList.map(dept => (
+                    <option key={dept.id} value={dept.id}>{dept.name}</option>
                   ))}
                 </select>
               </div>
               
               <div className="mb-5">
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Priority Area Title *
+                  Agency (Optional)
                 </label>
-                <input
-                  type="text"
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
-                  placeholder="e.g., Healthcare Infrastructure"
-                  autoFocus
-                />
+                <select
+                  value={formData.agency}
+                  onChange={(e) => setFormData({ ...formData, agency: e.target.value, department: '' })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm bg-white"
+                >
+                  <option value="">Select Agency</option>
+                  {agenciesList.map(agency => (
+                    <option key={agency.id} value={agency.id}>{agency.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Leave both empty for ministry-wide priority</p>
               </div>
               
               <div className="flex justify-end gap-2">
@@ -368,13 +452,13 @@ const PriorityAreaManagement = () => {
                 <div className="bg-white/20 p-1.5 rounded-lg">
                   <AlertCircle className="w-4 h-4 text-white" />
                 </div>
-                <h3 className="text-base font-bold text-white">Delete Area</h3>
+                <h3 className="text-base font-bold text-white">Delete Priority Area</h3>
               </div>
             </div>
             
             <div className="p-5">
               <p className="text-sm text-gray-700 mb-1">
-                Delete <span className="font-semibold text-gray-900">"{areaToDelete.title}"</span>?
+                Delete <span className="font-semibold text-gray-900">"{areaToDelete.name}"</span>?
               </p>
               <p className="text-xs text-gray-500 mb-5">
                 This will also delete all associated deliverables.

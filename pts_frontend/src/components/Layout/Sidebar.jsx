@@ -26,40 +26,116 @@ import {
   Bell,
   MessageSquare,
   HelpCircle,
-  UserCog
+  UserCog,
+  Briefcase,
+  Landmark,
+  ClipboardList,
+  CheckSquare,
+  BarChart,
+  Eye
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { projects, ministries, priorityAreas, deliverables } from '../../services/api';
+import mainApi from '../../services/mainApi';
 
 const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, userRole } = useAuth();
+  // console.log('User info in Sidebar:', user);
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
   
   // Real data states
   const [stats, setStats] = useState({
-    totalProjects: 0,
-    totalMinistries: 0,
+    totalInitiatives: 0,
+    totalDepartments: 0,
+    totalAgencies: 0,
     totalPriorityAreas: 0,
     totalDeliverables: 0,
     completionRate: 0,
-    avgRating: 0
+    avgRating: 0,
+    pendingApprovals: 0,
+    pendingAssessments: 0
   });
   const [loading, setLoading] = useState(true);
 
-  // Check if user is admin (superuser or staff)
+  // Destructure API methods
+  const { initiatives, departments, agencies, priorityAreas, deliverables } = mainApi;
+
+  // Check if user is admin (superuser)
   const isAdmin = user?.is_superuser;
 
   // Build navigation based on user role
   const getNavigation = () => {
+    // Base navigation for all authenticated users
     const baseNav = [
-      { name: 'Overview', href: '/dashboard', icon: LayoutDashboard, gradient: 'from-blue-500 to-indigo-500' },
-      { name: 'Projects', href: '/dashboard/projects', icon: FolderTree, gradient: 'from-green-500 to-emerald-500' },
-      { name: 'Ministries', href: '/dashboard/ministries', icon: Building2, gradient: 'from-purple-500 to-violet-500' },
-      { name: 'Priority Areas', href: '/dashboard/priority-areas', icon: Target, gradient: 'from-orange-500 to-red-500' },
-      { name: 'Deliverables', href: '/dashboard/deliverables', icon: Package, gradient: 'from-teal-500 to-cyan-500' },
-      { name: 'Reports', href: '/dashboard/reports', icon: FileText, gradient: 'from-rose-500 to-pink-500' },
+      { name: 'Overview', href: '/dashboard', icon: LayoutDashboard, gradient: 'from-blue-500 to-indigo-500', roles: ['super_admin', 'director', 'staff', 'project_admin', 'sector_expert'] },
     ];
+    
+    // Initiatives - visible to all except sector expert (they only assess)
+    if (userRole !== 'sector_expert') {
+      baseNav.push({ 
+        name: 'Initiatives', 
+        href: '/dashboard/initiatives', 
+        icon: FolderTree, 
+        gradient: 'from-green-500 to-emerald-500',
+        roles: ['super_admin', 'director', 'staff', 'project_admin']
+      });
+    }
+    
+    // Management section - only for Project Admin and Super Admin
+    if (user?.role === 'project_admin' || user?.role === 'super_admin') {
+      baseNav.push(
+        { name: 'Departments', href: '/dashboard/departments', icon: Building2, gradient: 'from-purple-500 to-violet-500', roles: ['project_admin', 'super_admin'] },
+        { name: 'Agencies', href: '/dashboard/agencies', icon: Landmark, gradient: 'from-cyan-500 to-blue-500', roles: ['project_admin', 'super_admin'] },
+        { name: 'Priority Areas', href: '/dashboard/priority-areas', icon: Target, gradient: 'from-orange-500 to-red-500', roles: ['project_admin', 'super_admin'] },
+        { name: 'Deliverables', href: '/dashboard/deliverables', icon: Package, gradient: 'from-teal-500 to-cyan-500', roles: ['project_admin', 'super_admin'] }
+      );
+    }
+    
+    // Reports - visible to all except sector expert
+    if (user?.role !== 'sector_expert') {
+      baseNav.push({ 
+        name: 'Reports', 
+        href: '/dashboard/reports', 
+        icon: FileText, 
+        gradient: 'from-rose-500 to-pink-500',
+        roles: ['super_admin', 'director', 'staff', 'project_admin']
+      });
+    }
+    
+    // Pending Approvals - only for Director
+    if (user?.role === 'director' || user?.role === 'super_admin') {
+      baseNav.push({ 
+        name: 'Pending Approvals', 
+        href: '/dashboard/pending-approvals', 
+        icon: Clock, 
+        gradient: 'from-yellow-500 to-orange-500',
+        roles: ['director', 'super_admin'],
+        badge: stats.pendingApprovals
+      });
+    }
+    
+    // Pending Assessments - only for Sector Expert
+    if (user?.role === 'sector_expert' || user?.role === 'super_admin') {
+      baseNav.push({ 
+        name: 'Pending Assessments', 
+        href: '/dashboard/pending-assessments', 
+        icon: ClipboardList, 
+        gradient: 'from-indigo-500 to-purple-500',
+        roles: ['sector_expert', 'super_admin'],
+        badge: stats.pendingAssessments
+      });
+    }
+    
+    // My Tasks - for Staff (initiatives they are working on)
+    if (user?.role === 'staff' || user?.role === 'super_admin') {
+      baseNav.push({ 
+        name: 'My Tasks', 
+        href: '/dashboard/my-tasks', 
+        icon: CheckSquare, 
+        gradient: 'from-teal-500 to-cyan-500',
+        roles: ['staff', 'super_admin']
+      });
+    }
     
     // Add User Management for admin users
     if (isAdmin) {
@@ -86,62 +162,77 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
 
   useEffect(() => {
     fetchStats();
+    fetchRoleSpecificCounts();
   }, []);
 
   const fetchStats = async () => {
     try {
       setLoading(true);
       
-      // Fetch all data in parallel
-      const [projectsRes, ministriesRes, priorityAreasRes, deliverablesRes] = await Promise.all([
-        projects.list(),
-        ministries.list(),
+      // Fetch all data in parallel using the new API endpoints
+      const [initiativesRes, departmentsRes, agenciesRes, priorityAreasRes, deliverablesRes] = await Promise.all([
+        initiatives.list(),
+        departments.list(),
+        agencies.list(),
         priorityAreas.list(),
         deliverables.list()
       ]);
       
-      const allProjects = projectsRes.data.results || projectsRes.data;
-      const totalProjects = allProjects.length;
-      const totalMinistries = ministriesRes.data.length;
+      const allInitiatives = initiativesRes.data.results || initiativesRes.data;
+      const totalInitiatives = allInitiatives.length;
+      const totalDepartments = departmentsRes.data.length;
+      const totalAgencies = agenciesRes.data.length;
       const totalPriorityAreas = priorityAreasRes.data.length;
       const totalDeliverables = deliverablesRes.data.length;
       
       // Calculate average rating
-      const ratedProjects = allProjects.filter(p => p.performance_rating);
-      const avgRating = ratedProjects.length > 0 
-        ? (ratedProjects.reduce((sum, p) => sum + p.performance_rating, 0) / ratedProjects.length).toFixed(1)
+      const ratedInitiatives = allInitiatives.filter(i => i.performance_rating);
+      const avgRating = ratedInitiatives.length > 0 
+        ? (ratedInitiatives.reduce((sum, i) => sum + i.performance_rating, 0) / ratedInitiatives.length).toFixed(1)
         : 0;
       
-      // Calculate completion rate (projects with actual data meeting or exceeding target)
-      const completedProjects = allProjects.filter(p => 
-        p.actual_data && p.target_data && parseFloat(p.actual_data) >= parseFloat(p.target_data)
+      // Calculate completion rate
+      const completedInitiatives = allInitiatives.filter(i => 
+        i.actual_value && i.target_value && parseFloat(i.actual_value) >= parseFloat(i.target_value)
       );
-      const completionRate = totalProjects > 0 
-        ? ((completedProjects.length / totalProjects) * 100).toFixed(0)
+      const completionRate = totalInitiatives > 0 
+        ? ((completedInitiatives.length / totalInitiatives) * 100).toFixed(0)
         : 0;
       
-      setStats({
-        totalProjects,
-        totalMinistries,
+      setStats(prev => ({
+        ...prev,
+        totalInitiatives,
+        totalDepartments,
+        totalAgencies,
         totalPriorityAreas,
         totalDeliverables,
         completionRate,
         avgRating
-      });
+      }));
       
     } catch (error) {
       console.error('Error fetching sidebar stats:', error);
-      // Fallback to empty stats if API fails
-      setStats({
-        totalProjects: 0,
-        totalMinistries: 0,
-        totalPriorityAreas: 0,
-        totalDeliverables: 0,
-        completionRate: 0,
-        avgRating: 0
-      });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchRoleSpecificCounts = async () => {
+    try {
+      // Fetch pending approvals count (for Director)
+      if (userRole === 'director' || userRole === 'super_admin') {
+        // This would call an API endpoint to get pending approvals count
+        // const response = await mainApi.quarterlyProgress.getPendingApprovalsCount();
+        // setStats(prev => ({ ...prev, pendingApprovals: response.data.count }));
+      }
+      
+      // Fetch pending assessments count (for Sector Expert)
+      if (userRole === 'sector_expert' || userRole === 'super_admin') {
+        // const response = await mainApi.assessments.getPendingAssessmentsCount();
+        // setStats(prev => ({ ...prev, pendingAssessments: response.data.count }));
+      }
+    } catch (error) {
+      console.error('Error fetching role counts:', error);
     }
   };
 
@@ -151,19 +242,30 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
   const quickInsights = [
     { 
       icon: Award, 
-      label: 'Projects', 
-      value: stats.totalProjects, 
+      label: 'Initiatives', 
+      value: stats.totalInitiatives, 
       gradient: 'from-green-500 to-emerald-500', 
       bg: 'from-green-500/10 to-emerald-500/10',
-      suffix: ''
+      suffix: '',
+      roles: ['super_admin', 'director', 'staff', 'project_admin']
     },
     { 
-      icon: Users, 
-      label: 'Ministries', 
-      value: stats.totalMinistries, 
+      icon: Building2, 
+      label: 'Departments', 
+      value: stats.totalDepartments, 
       gradient: 'from-blue-500 to-indigo-500', 
       bg: 'from-blue-500/10 to-indigo-500/10',
-      suffix: ''
+      suffix: '',
+      roles: ['super_admin', 'project_admin']
+    },
+    { 
+      icon: Landmark, 
+      label: 'Agencies', 
+      value: stats.totalAgencies, 
+      gradient: 'from-cyan-500 to-teal-500', 
+      bg: 'from-cyan-500/10 to-teal-500/10',
+      suffix: '',
+      roles: ['super_admin', 'project_admin']
     },
     { 
       icon: Target, 
@@ -171,7 +273,8 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
       value: stats.totalPriorityAreas || 0, 
       gradient: 'from-orange-500 to-red-500', 
       bg: 'from-orange-500/10 to-red-500/10',
-      suffix: ''
+      suffix: '',
+      roles: ['super_admin', 'project_admin']
     },
     { 
       icon: Package, 
@@ -179,7 +282,8 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
       value: stats.totalDeliverables || 0, 
       gradient: 'from-teal-500 to-cyan-500', 
       bg: 'from-teal-500/10 to-cyan-500/10',
-      suffix: ''
+      suffix: '',
+      roles: ['super_admin', 'project_admin']
     },
     { 
       icon: Zap, 
@@ -187,7 +291,8 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
       value: stats.completionRate, 
       gradient: 'from-purple-500 to-violet-500', 
       bg: 'from-purple-500/10 to-violet-500/10',
-      suffix: '%'
+      suffix: '%',
+      roles: ['super_admin', 'director', 'staff', 'project_admin']
     },
     { 
       icon: Activity, 
@@ -195,9 +300,27 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
       value: stats.avgRating, 
       gradient: 'from-rose-500 to-pink-500', 
       bg: 'from-rose-500/10 to-pink-500/10',
-      suffix: '/5'
+      suffix: '/5',
+      roles: ['super_admin', 'director', 'staff', 'project_admin']
     }
   ];
+
+  // Filter quick insights based on user role
+  const visibleQuickInsights = quickInsights.filter(insight => 
+    insight.roles.includes(userRole) || insight.roles.includes('super_admin')
+  );
+
+  // Get user role display name
+  const getRoleDisplayName = () => {
+    switch(userRole) {
+      case 'super_admin': return 'Super Administrator';
+      case 'director': return 'Director';
+      case 'staff': return 'Field Staff';
+      case 'project_admin': return 'Project Administrator';
+      case 'sector_expert': return 'Sector Expert';
+      default: return 'User';
+    }
+  };
 
   return (
     <>
@@ -235,7 +358,7 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
                       <span className="text-white font-bold text-xl tracking-tight">FME | PTS</span>
                       <Crown className="w-3.5 h-3.5 text-yellow-400 animate-bounce" />
                     </div>
-                    <p className="text-white/70 text-[11px] mt-0.5">Enterprise Suite</p>
+                    <p className="text-white/70 text-[11px] mt-0.5">Federal Ministry of Environment</p>
                   </div>
                 </div>
                 <button
@@ -274,7 +397,7 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 z-10 group-hover:text-primary-400 transition" />
               <input
                 type="text"
-                placeholder="Search anything..."
+                placeholder="Search initiatives, departments..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-3 py-2 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-transparent transition group-hover:bg-white/20"
@@ -310,6 +433,11 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
                     )}
                     <Icon className={`mr-3 h-4 w-4 transition-all duration-300 ${isActive ? 'text-white' : 'text-gray-400 group-hover:text-white group-hover:scale-110'}`} />
                     <span className="relative z-10">{item.name}</span>
+                    {item.badge > 0 && (
+                      <span className="absolute right-3 px-1.5 py-0.5 text-xs font-bold bg-red-500 text-white rounded-full">
+                        {item.badge}
+                      </span>
+                    )}
                     {isActive && (
                       <div className="absolute right-3 w-1.5 h-1.5 bg-white rounded-full animate-pulse"></div>
                     )}
@@ -318,7 +446,7 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
               })}
             </nav>
 
-            {/* Quick Insights Stats - Now with Real Data */}
+            {/* Quick Insights Stats - Filtered by role */}
             <div className="mt-6 px-4">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <Zap className="w-3 h-3" />
@@ -326,7 +454,7 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
               </p>
               {loading ? (
                 <div className="grid grid-cols-2 gap-2">
-                  {[1, 2, 3, 4, 5, 6].map((i) => (
+                  {[1, 2, 3, 4].map((i) => (
                     <div key={i} className="bg-white/5 backdrop-blur-sm rounded-xl p-2 border border-white/10 animate-pulse">
                       <div className="w-3.5 h-3.5 bg-gray-600 rounded mb-1"></div>
                       <div className="w-8 h-4 bg-gray-600 rounded mb-1"></div>
@@ -336,7 +464,7 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
-                  {quickInsights.map((stat, idx) => {
+                  {visibleQuickInsights.map((stat, idx) => {
                     const Icon = stat.icon;
                     return (
                       <div key={idx} className={`bg-gradient-to-br ${stat.bg} backdrop-blur-sm rounded-xl p-2 border border-white/10 hover:scale-105 transition-all duration-300 group cursor-pointer`}>
@@ -370,9 +498,7 @@ const Sidebar = ({ sidebarOpen, toggleSidebar }) => {
                   {user?.first_name} {user?.last_name}
                 </p>
                 <p className="text-[11px] text-gray-400 truncate">{user?.email}</p>
-                {isAdmin && (
-                  <p className="text-[9px] text-primary-400 mt-0.5">Administrator</p>
-                )}
+                <p className="text-[10px] text-primary-400 mt-0.5">{getRoleDisplayName()}</p>
               </div>
               <Shield className="w-3.5 h-3.5 text-primary-400 group-hover:rotate-12 transition" />
             </div>

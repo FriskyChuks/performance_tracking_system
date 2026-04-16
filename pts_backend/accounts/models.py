@@ -33,8 +33,22 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now)
-    assigned_ministry = models.ForeignKey('main.Ministry', on_delete=models.SET_NULL, null=True, blank=True)
-    can_access_dashboard = models.BooleanField(default=False)
+    
+    # Assignment to Department or Agency (instead of Ministry)
+    assigned_department = models.ForeignKey(
+        'main.Department', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='assigned_users'
+    )
+    assigned_agency = models.ForeignKey(
+        'main.Agency', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='assigned_users'
+    )
     
     # Public portal fields
     location = models.CharField(max_length=250, blank=True, null=True)
@@ -43,13 +57,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     comment_count = models.IntegerField(default=0)
     last_public_activity = models.DateTimeField(null=True, blank=True)
     is_public_only = models.BooleanField(default=True)
+    can_access_dashboard = models.BooleanField(default=False)
 
+    # Upgrade tracking
     upgraded_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True)
     upgraded_at = models.DateTimeField(null=True, blank=True)
     
     # Groups and permissions are already included via PermissionsMixin
-    # Django automatically adds: groups, user_permissions
-    
     objects = UserManager()
     
     USERNAME_FIELD = 'email'
@@ -70,28 +84,35 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.full_name
     
     @property
+    def assigned_entity(self):
+        """Get the assigned department or agency"""
+        if self.assigned_department:
+            return {'type': 'department', 'name': self.assigned_department.name, 'id': self.assigned_department.id}
+        if self.assigned_agency:
+            return {'type': 'agency', 'name': self.assigned_agency.name, 'id': self.assigned_agency.id}
+        return None
+    
+    @property
     def can_moderate_comments(self):
-        """Check if user can moderate comments"""
         return self.has_perm('engagement.moderate_comments') or self.is_staff
     
     @property
     def can_manage_projects(self):
-        """Check if user can manage projects"""
         return self.has_perm('main.manage_projects') or self.is_staff
     
     @property
     def can_view_reports(self):
-        """Check if user can view reports"""
         return self.has_perm('reports.view_reports') or self.is_staff
     
     class Meta:
         permissions = [
             # Dashboard permissions
             ("view_dashboard", "Can view dashboard"),
-            ("manage_ministries", "Can manage ministries"),
+            ("manage_departments", "Can manage departments"),
+            ("manage_agencies", "Can manage agencies"),
             ("manage_priority_areas", "Can manage priority areas"),
             ("manage_deliverables", "Can manage deliverables"),
-            ("manage_all_projects", "Can manage all projects"),
+            ("manage_all_initiatives", "Can manage all initiatives"),
             ("view_all_reports", "Can view all reports"),
             ("export_data", "Can export data"),
             
@@ -107,23 +128,25 @@ class User(AbstractBaseUser, PermissionsMixin):
             ("manage_roles", "Can manage roles and permissions"),
         ]
 
-
 class ActivityLog(models.Model):
     ACTION_TYPES = [
         ('login', 'Login'),
         ('logout', 'Logout'),
         ('create', 'Create'),
-        ('project_created', 'Project Created'),
+        ('initiative_created', 'Initiative Created'),
         ('update', 'Update'),
-        ('project_updated', 'Project Updated'),
+        ('initiative_updated', 'Initiative Updated'),
         ('delete', 'Delete'),
-        ('project_deleted', 'Project Deleted'),
+        ('initiative_deleted', 'Initiative Deleted'),
+        ('progress_recorded', 'Progress Recorded'),
         ('view', 'View'),
         ('export', 'Export'),
         ('generate_report', 'Generate Report'),
         ('report_generated', 'Report Generated'),
         ('change_password', 'Change Password'),
         ('update_profile', 'Update Profile'),
+        ('user_upgraded', 'User Upgraded'),
+        ('role_assigned', 'Role Assigned'),
     ]
     
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='activities')

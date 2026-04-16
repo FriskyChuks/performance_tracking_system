@@ -182,3 +182,15 @@
     border-right-color: var(--border);
   }
 }
+
+/* src/index.css - Add at the top */
+@import 'leaflet/dist/leaflet.css';
+
+/* Fix Leaflet icon issues */
+.leaflet-default-icon-path {
+  background-image: url(https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png);
+}
+
+.leaflet-container {
+  z-index: 1;
+}

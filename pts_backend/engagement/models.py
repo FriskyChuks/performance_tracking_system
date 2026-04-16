@@ -21,7 +21,7 @@ class AnonymousCommenter(models.Model):
 # engagement/models.py - Ensure this model exists
 class ProjectImage(models.Model):
     """Images uploaded for a project"""
-    project = models.ForeignKey('main.Project', on_delete=models.CASCADE, related_name='images')
+    project = models.ForeignKey('main.ProjectInitiative', on_delete=models.CASCADE, related_name='images')
     image = models.ImageField(upload_to='project_images/%Y/%m/%d/', 
                               validators=[FileExtensionValidator(['jpg', 'jpeg', 'png', 'webp'])])
     caption = models.CharField(max_length=500, blank=True)
@@ -30,14 +30,14 @@ class ProjectImage(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
-        return f"Image for {self.project.outcome[:50]}"
+        return f"Image for {self.project.program_goal[:50]}"
     
     class Meta:
         ordering = ['-is_primary', '-created_at']
 
 class ProjectComment(models.Model):
     """Comments from users (both registered and anonymous) on projects"""
-    project = models.ForeignKey('main.Project', on_delete=models.CASCADE, related_name='comments')
+    project = models.ForeignKey('main.ProjectInitiative', on_delete=models.CASCADE, related_name='comments')
     
     # Registered user from accounts.User (replaces public_user)
     user = models.ForeignKey(
@@ -73,7 +73,7 @@ class ProjectComment(models.Model):
             author = self.anonymous_user.display_name or "Anonymous"
         else:
             author = "Unknown"
-        return f"{author} on {self.project.outcome[:30]}"
+        return f"{author} on {self.project.program_goal[:30]}"
     
     @property
     def author_name(self):

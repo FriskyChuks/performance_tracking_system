@@ -5,7 +5,7 @@ import { Mail, Lock, Eye, EyeOff, TrendingUp } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import Navbar from '../Layout/Navbar';
 import Footer from '../Layout/Footer';
-import { activities } from '../../services/api';
+import accountsApi from '../../services/accountsApi';
 import toast from 'react-hot-toast';
 
 const Login = () => {
@@ -36,7 +36,16 @@ const Login = () => {
       const success = await login(formData.email, formData.password);
       
       if (success) {
-        await activities.logActivity('login', `Logged in from ${window.location.hostname}`);
+        // Log activity - wrap in try-catch to prevent it from breaking the flow
+        try {
+          await accountsApi.logActivity({ 
+            action: 'login', 
+            description: `Logged in from ${window.location.hostname}` 
+          });
+        } catch (logError) {
+          console.warn('Activity logging failed:', logError);
+          // Don't let logging failure affect login
+        }
         
         // Get user data from localStorage that was set during login
         const userDataStr = localStorage.getItem('user_data');
@@ -50,22 +59,8 @@ const Login = () => {
           }
         }
         
-        // Also try to get from session storage
-        const sessionUserData = sessionStorage.getItem('user_data');
-        if (sessionUserData && !userData) {
-          try {
-            userData = JSON.parse(sessionUserData);
-          } catch (e) {
-            console.error('Error parsing session user data:', e);
-          }
-        }
-        
-        console.log('User data from storage:', userData);
-        
         const canAccessDashboard = userData?.can_access_dashboard || userData?.is_staff || userData?.is_superuser;
         const isPublicOnly = userData?.is_public_only;
-        
-        console.log('Redirect decision:', { canAccessDashboard, isPublicOnly });
         
         if (canAccessDashboard) {
           toast.success('Welcome back! Redirecting to dashboard...');

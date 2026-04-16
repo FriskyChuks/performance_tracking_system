@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './hooks/useAuth';
+import IdleTimer from './components/Common/IdleTimer';
 import LandingPage from './pages/LandingPage';
 import Dashboard from './pages/Dashboard';
 import Login from './components/Auth/Login';
@@ -27,45 +28,50 @@ function AppContent() {
   }
 
   return (
-    <Routes>
-      {/* Main Landing Route */}
-      <Route path="/" element={<LandingPage />} />
+    <>
+      {/* Global Idle Timer - Works for all authenticated routes */}
+      <IdleTimer idleTime={15 * 60 * 1000} countdownTime={60 * 1000} />
       
-      {/* Public Engagement Portal Routes */}
-      <Route path="/public" element={<PublicLayout />}>
-        <Route index element={<PublicProjectList />} />
-        <Route path="projects" element={<PublicProjectList />} />
-        <Route path="projects/:id" element={<PublicProjectDetail />} />
-      </Route>
-      
-      {/* Auth Routes */}
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      
-      {/* Protected Dashboard Routes - Only for users with dashboard access */}
-      <Route
-        path="/dashboard/*"
-        element={
-          <PrivateRoute>
-            <Dashboard />
-          </PrivateRoute>
-        }
-      />
-      
-      {/* Admin-only routes can be added like this:
-      <Route
-        path="/admin/*"
-        element={
-          <PrivateRoute requireAdmin={true}>
-            <AdminPanel />
-          </PrivateRoute>
-        }
-      />
-      */}
-      
-      {/* 404 Redirect */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      <Routes>
+        {/* Main Landing Route */}
+        <Route path="/" element={<LandingPage />} />
+        
+        {/* Public Engagement Portal Routes */}
+        <Route path="/public" element={<PublicLayout />}>
+          <Route index element={<PublicProjectList />} />
+          <Route path="projects" element={<PublicProjectList />} />
+          <Route path="projects/:id" element={<PublicProjectDetail />} />
+        </Route>
+        
+        {/* Auth Routes */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        
+        {/* Protected Dashboard Routes - Only for users with dashboard access */}
+        <Route
+          path="/dashboard/*"
+          element={
+            <PrivateRoute>
+              <Dashboard />
+            </PrivateRoute>
+          }
+        />
+        
+        {/* Admin-only routes can be added like this:
+        <Route
+          path="/admin/*"
+          element={
+            <PrivateRoute requireAdmin={true}>
+              <AdminPanel />
+            </PrivateRoute>
+          }
+        />
+        */}
+        
+        {/* 404 Redirect */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
 

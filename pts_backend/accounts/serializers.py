@@ -1,25 +1,29 @@
 # accounts/serializers.py
-from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer
-from djoser.serializers import UserSerializer as BaseUserSerializer
 from rest_framework import serializers
-from django.contrib.auth.models import Group
-
-from main.models import Ministry
+from django.contrib.auth.models import Group, Permission
+from main.models import Department, Agency
 from .models import User, ActivityLog
-
-from .models import User, ActivityLog, Group, Permission
+from .utils import get_user_role, get_user_permissions, get_user_role_name
 
 class GroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = Group
         fields = ['id', 'name']
 
+class PermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Permission
+        fields = ['id', 'name', 'codename']
+
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
     groups = GroupSerializer(many=True, read_only=True)
     group_names = serializers.SerializerMethodField()
-    assigned_ministry_name = serializers.SerializerMethodField()
+    assigned_entity = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
+    role_display = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
     
     class Meta:
         model = User
@@ -27,9 +31,9 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'email', 'first_name', 'last_name', 'full_name', 'display_name',
             'phone', 'location', 'is_staff', 'is_active', 'is_superuser',
             'is_public_only', 'can_access_dashboard', 'is_verified',
-            'assigned_ministry', 'assigned_ministry_name',
-            'groups', 'group_names', 'comment_count',
-            'date_joined', 'last_login', 'last_public_activity'
+            'assigned_department', 'assigned_agency', 'assigned_entity',
+            'groups', 'group_names', 'role', 'role_display', 'permissions',
+            'comment_count', 'date_joined', 'last_login', 'last_public_activity'
         ]
         read_only_fields = ['id', 'date_joined', 'last_login', 'comment_count']
     
@@ -42,10 +46,17 @@ class UserSerializer(serializers.ModelSerializer):
     def get_group_names(self, obj):
         return [group.name for group in obj.groups.all()]
     
-    def get_assigned_ministry_name(self, obj):
-        if obj.assigned_ministry:
-            return obj.assigned_ministry.title
-        return None
+    def get_assigned_entity(self, obj):
+        return obj.assigned_entity
+    
+    def get_role(self, obj):
+        return get_user_role(obj)
+    
+    def get_role_display(self, obj):
+        return get_user_role_name(obj)
+    
+    def get_permissions(self, obj):
+        return get_user_permissions(obj)
 
 class UserCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -64,42 +75,42 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     """Serializer for admin user updates"""
-    group = serializers.CharField(write_only=True, required=False)
     group_id = serializers.IntegerField(write_only=True, required=False)
-    ministry_id = serializers.IntegerField(write_only=True, required=False)
+    department_id = serializers.IntegerField(write_only=True, required=False)
+    agency_id = serializers.IntegerField(write_only=True, required=False)
     
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'phone', 'location',
             'is_staff', 'is_active', 'is_public_only', 'can_access_dashboard',
-            'assigned_ministry', 'ministry_id', 'group', 'group_id',
-            'is_verified'
+            'assigned_department', 'assigned_agency', 'department_id', 'agency_id',
+            'group_id', 'is_verified'
         ]
         read_only_fields = ['id', 'email']
     
     def update(self, instance, validated_data):
-        # Handle group assignment
-        group_name = validated_data.pop('group', None)
+        # Handle department/agency assignment
+        department_id = validated_data.pop('department_id', None)
+        agency_id = validated_data.pop('agency_id', None)
         group_id = validated_data.pop('group_id', None)
-        ministry_id = validated_data.pop('ministry_id', None)
         
-        # Update ministry
-        if ministry_id:
+        # Update department
+        if department_id:
             try:
-                instance.assigned_ministry = Ministry.objects.get(id=ministry_id)
-            except Ministry.DoesNotExist:
+                instance.assigned_department = Department.objects.get(id=department_id)
+                instance.assigned_agency = None
+            except Department.DoesNotExist:
+                pass
+        elif agency_id:
+            try:
+                instance.assigned_agency = Agency.objects.get(id=agency_id)
+                instance.assigned_department = None
+            except Agency.DoesNotExist:
                 pass
         
         # Update group
-        if group_name:
-            try:
-                group = Group.objects.get(name=group_name)
-                instance.groups.clear()
-                instance.groups.add(group)
-            except Group.DoesNotExist:
-                pass
-        elif group_id:
+        if group_id:
             try:
                 group = Group.objects.get(id=group_id)
                 instance.groups.clear()
@@ -113,44 +124,24 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
-    
-
-class PermissionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Permission
-        fields = ['id', 'name', 'codename']
-  
-
-class ActivityLogSerializer(serializers.ModelSerializer):
-    user_email = serializers.EmailField(source='user.email', read_only=True)
-    user_name = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = ActivityLog
-        fields = ['id', 'user', 'user_email', 'user_name', 'action', 'description', 
-                  'ip_address', 'created_at']
-        read_only_fields = ['id', 'user', 'created_at']
-    
-    def get_user_name(self, obj):
-        return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.email
-    
 
 class UserListSerializer(serializers.ModelSerializer):
     """Simplified serializer for user list"""
     full_name = serializers.SerializerMethodField()
     group = serializers.SerializerMethodField()
     group_id = serializers.SerializerMethodField()
-    ministry_name = serializers.SerializerMethodField()
-    ministry_id = serializers.SerializerMethodField()
+    assigned_entity_name = serializers.SerializerMethodField()
+    assigned_entity_type = serializers.SerializerMethodField()
     user_type = serializers.SerializerMethodField()
+    role_display = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name',
             'is_staff', 'is_active', 'is_public_only', 'can_access_dashboard',
-            'group', 'group_id', 'ministry_name', 'ministry_id',
-            'user_type', 'date_joined', 'last_login'
+            'group', 'group_id', 'assigned_entity_name', 'assigned_entity_type',
+            'user_type', 'role_display', 'date_joined', 'last_login'
         ]
     
     def get_full_name(self, obj):
@@ -168,18 +159,21 @@ class UserListSerializer(serializers.ModelSerializer):
             return groups.first().id
         return None
     
-    def get_ministry_name(self, obj):
-        if obj.assigned_ministry:
-            return obj.assigned_ministry.title
+    def get_assigned_entity_name(self, obj):
+        if obj.assigned_department:
+            return obj.assigned_department.name
+        if obj.assigned_agency:
+            return obj.assigned_agency.name
         return None
     
-    def get_ministry_id(self, obj):
-        if obj.assigned_ministry:
-            return obj.assigned_ministry.id
+    def get_assigned_entity_type(self, obj):
+        if obj.assigned_department:
+            return 'department'
+        if obj.assigned_agency:
+            return 'agency'
         return None
     
     def get_user_type(self, obj):
-        """Determine user type for UI display"""
         if obj.is_superuser:
             return 'super_admin'
         elif obj.is_staff and obj.can_access_dashboard:
@@ -190,3 +184,19 @@ class UserListSerializer(serializers.ModelSerializer):
             return 'pending'
         else:
             return 'public'
+    
+    def get_role_display(self, obj):
+        return get_user_role_name(obj)
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    
+    class Meta:
+        model = ActivityLog
+        fields = ['id', 'user', 'user_name', 'user_email', 'action', 'description', 
+                  'ip_address', 'created_at']
+        read_only_fields = ['id', 'created_at']
+    
+    def get_user_name(self, obj):
+        return obj.user.full_name

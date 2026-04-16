@@ -1,12 +1,10 @@
 # accounts/middleware.py
 from django.utils.deprecation import MiddlewareMixin
-from django.http import JsonResponse
-from django.urls import resolve
-
 from .models import ActivityLog
 
-
 class ActivityLogMiddleware(MiddlewareMixin):
+    """Middleware to log user activities automatically"""
+    
     def process_request(self, request):
         # Store request info for later use
         request._user_agent = request.META.get('HTTP_USER_AGENT', '')
@@ -22,23 +20,7 @@ class ActivityLogMiddleware(MiddlewareMixin):
         return ip
     
     def process_response(self, request, response):
-        # Optional: Log certain actions automatically
         return response
-
-    @staticmethod
-    def log_activity(user, action, description, request=None):
-        """Helper method to log activities"""
-        ip_address = request._ip_address if request and hasattr(request, '_ip_address') else None
-        user_agent = request._user_agent if request and hasattr(request, '_user_agent') else ''
-        
-        ActivityLog.objects.create(
-            user=user,
-            action=action,
-            description=description,
-            ip_address=ip_address,
-            user_agent=user_agent
-        )
-
 
 class DashboardAccessMiddleware:
     """Middleware to restrict dashboard access to authorized users only"""
@@ -52,6 +34,7 @@ class DashboardAccessMiddleware:
             if request.user.is_authenticated:
                 # Check if user has dashboard access
                 if not (request.user.can_access_dashboard or request.user.is_staff or request.user.is_superuser):
+                    from django.http import JsonResponse
                     return JsonResponse(
                         {'error': 'You do not have permission to access this resource'},
                         status=403
@@ -59,3 +42,21 @@ class DashboardAccessMiddleware:
         
         response = self.get_response(request)
         return response
+
+# Utility function for logging activities
+def log_activity(user, action, description, request=None):
+    """Helper function to log user activities"""
+    ip_address = None
+    user_agent = ''
+    
+    if request:
+        ip_address = getattr(request, '_ip_address', None)
+        user_agent = getattr(request, '_user_agent', '')
+    
+    ActivityLog.objects.create(
+        user=user,
+        action=action,
+        description=description,
+        ip_address=ip_address,
+        user_agent=user_agent
+    )

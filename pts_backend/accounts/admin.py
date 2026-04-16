@@ -21,7 +21,6 @@ class ActivityLogInline(admin.TabularInline):
         return False
 
 class UserAdmin(BaseUserAdmin):
-    # Remove 'username' from ordering - use email instead
     ordering = ['email']
     
     list_display = [
@@ -29,7 +28,7 @@ class UserAdmin(BaseUserAdmin):
         'full_name_display', 
         'user_type_badge', 
         'group_badges', 
-        'assigned_ministry_display',
+        'assigned_entity_display',
         'comment_count',
         'last_active_display',
         'date_joined'
@@ -49,9 +48,8 @@ class UserAdmin(BaseUserAdmin):
     
     filter_horizontal = ['groups', 'user_permissions']
     
-    # Override fieldsets to remove username field
     fieldsets = (
-        (None, {
+        ('Account Information', {
             'fields': ('email', 'password')
         }),
         ('Personal Information', {
@@ -62,10 +60,13 @@ class UserAdmin(BaseUserAdmin):
                 'is_staff', 
                 'is_active', 
                 'can_access_dashboard',
-                'assigned_ministry', 
                 'groups', 
                 'user_permissions'
             ),
+            'classes': ('wide',)
+        }),
+        ('Assignment', {
+            'fields': ('assigned_department', 'assigned_agency'),
             'classes': ('wide',)
         }),
         ('Public Portal', {
@@ -88,7 +89,6 @@ class UserAdmin(BaseUserAdmin):
         }),
     )
     
-    # Override add_fieldsets to remove username field
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
@@ -102,16 +102,30 @@ class UserAdmin(BaseUserAdmin):
         return obj.full_name
     full_name_display.short_description = 'Full Name'
     
-    def assigned_ministry_display(self, obj):
-        if obj.assigned_ministry:
-            return obj.assigned_ministry.title
+    def assigned_entity_display(self, obj):
+        entity = obj.assigned_entity
+        if entity:
+            if entity['type'] == 'department':
+                return format_html('<span style="color: #3b82f6;">🏢 {}</span>', entity['name'])
+            else:
+                return format_html('<span style="color: #8b5cf6;">🏛️ {}</span>', entity['name'])
         return '-'
-    assigned_ministry_display.short_description = 'Ministry'
+    assigned_entity_display.short_description = 'Department/Agency'
     
     def user_type_badge(self, obj):
         if obj.is_superuser:
             return format_html('<span style="background-color: #ef4444; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">👑 Super Admin</span>')
         elif obj.is_staff and obj.can_access_dashboard:
+            # Check user's group for more specific badge
+            groups = obj.groups.all()
+            if groups.filter(name='Director').exists():
+                return format_html('<span style="background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🎯 Director</span>')
+            elif groups.filter(name='SectorExpert').exists():
+                return format_html('<span style="background-color: #8b5cf6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🔬 Sector Expert</span>')
+            elif groups.filter(name='Staff').exists():
+                return format_html('<span style="background-color: #22c55e; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">👷 Staff</span>')
+            elif groups.filter(name='ProjectAdmin').exists():
+                return format_html('<span style="background-color: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">📋 Project Admin</span>')
             return format_html('<span style="background-color: #22c55e; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">📊 Staff</span>')
         elif obj.can_access_dashboard:
             return format_html('<span style="background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">👤 Dashboard User</span>')
@@ -128,10 +142,10 @@ class UserAdmin(BaseUserAdmin):
         
         group_colors = {
             'Super Admin': '#ef4444',
-            'Project Manager': '#22c55e',
-            'Ministry Officer': '#3b82f6',
-            'Data Analyst': '#8b5cf6',
-            'Engagement Moderator': '#f59e0b',
+            'Director': '#3b82f6',
+            'SectorExpert': '#8b5cf6',
+            'Staff': '#22c55e',
+            'ProjectAdmin': '#f59e0b',
             'Viewer': '#6b7280',
         }
         
@@ -160,9 +174,10 @@ class UserAdmin(BaseUserAdmin):
         'upgrade_to_dashboard', 
         'downgrade_to_public',
         'verify_users',
-        'assign_project_manager',
-        'assign_ministry_officer',
-        'assign_moderator'
+        'assign_director',
+        'assign_sector_expert',
+        'assign_staff',
+        'assign_project_admin'
     ]
     
     def upgrade_to_dashboard(self, request, queryset):
@@ -189,22 +204,9 @@ class UserAdmin(BaseUserAdmin):
         self.message_user(request, f'{updated} users marked as verified.')
     verify_users.short_description = 'Verify selected users'
     
-    def assign_project_manager(self, request, queryset):
+    def assign_director(self, request, queryset):
         from django.contrib.auth.models import Group
-        group, _ = Group.objects.get_or_create(name='Project Manager')
-        for user in queryset:
-            user.groups.clear()  # Remove existing groups
-            user.groups.add(group)
-            user.is_staff = True
-            user.can_access_dashboard = True
-            user.is_public_only = False
-            user.save()
-        self.message_user(request, f'{queryset.count()} users assigned to Project Manager group.')
-    assign_project_manager.short_description = 'Assign to Project Manager'
-    
-    def assign_ministry_officer(self, request, queryset):
-        from django.contrib.auth.models import Group
-        group, _ = Group.objects.get_or_create(name='Ministry Officer')
+        group, _ = Group.objects.get_or_create(name='Director')
         for user in queryset:
             user.groups.clear()
             user.groups.add(group)
@@ -212,12 +214,12 @@ class UserAdmin(BaseUserAdmin):
             user.can_access_dashboard = True
             user.is_public_only = False
             user.save()
-        self.message_user(request, f'{queryset.count()} users assigned to Ministry Officer group.')
-    assign_ministry_officer.short_description = 'Assign to Ministry Officer'
+        self.message_user(request, f'{queryset.count()} users assigned to Director group.')
+    assign_director.short_description = 'Assign to Director'
     
-    def assign_moderator(self, request, queryset):
+    def assign_sector_expert(self, request, queryset):
         from django.contrib.auth.models import Group
-        group, _ = Group.objects.get_or_create(name='Engagement Moderator')
+        group, _ = Group.objects.get_or_create(name='SectorExpert')
         for user in queryset:
             user.groups.clear()
             user.groups.add(group)
@@ -225,8 +227,34 @@ class UserAdmin(BaseUserAdmin):
             user.can_access_dashboard = True
             user.is_public_only = False
             user.save()
-        self.message_user(request, f'{queryset.count()} users assigned to Engagement Moderator group.')
-    assign_moderator.short_description = 'Assign to Engagement Moderator'
+        self.message_user(request, f'{queryset.count()} users assigned to Sector Expert group.')
+    assign_sector_expert.short_description = 'Assign to Sector Expert'
+    
+    def assign_staff(self, request, queryset):
+        from django.contrib.auth.models import Group
+        group, _ = Group.objects.get_or_create(name='Staff')
+        for user in queryset:
+            user.groups.clear()
+            user.groups.add(group)
+            user.is_staff = True
+            user.can_access_dashboard = True
+            user.is_public_only = False
+            user.save()
+        self.message_user(request, f'{queryset.count()} users assigned to Staff group.')
+    assign_staff.short_description = 'Assign to Staff'
+    
+    def assign_project_admin(self, request, queryset):
+        from django.contrib.auth.models import Group
+        group, _ = Group.objects.get_or_create(name='ProjectAdmin')
+        for user in queryset:
+            user.groups.clear()
+            user.groups.add(group)
+            user.is_staff = True
+            user.can_access_dashboard = True
+            user.is_public_only = False
+            user.save()
+        self.message_user(request, f'{queryset.count()} users assigned to Project Admin group.')
+    assign_project_admin.short_description = 'Assign to Project Admin'
 
 class ActivityLogAdmin(admin.ModelAdmin):
     list_display = ['id', 'user_link', 'action_badge', 'description_short', 'ip_address', 'created_at']
@@ -250,16 +278,19 @@ class ActivityLogAdmin(admin.ModelAdmin):
             'login': '#22c55e',
             'logout': '#6b7280',
             'create': '#3b82f6',
-            'project_created': '#3b82f6',
+            'initiative_created': '#3b82f6',
             'update': '#f59e0b',
-            'project_updated': '#f59e0b',
+            'initiative_updated': '#f59e0b',
             'delete': '#ef4444',
-            'project_deleted': '#ef4444',
+            'initiative_deleted': '#ef4444',
+            'progress_recorded': '#10b981',
             'export': '#8b5cf6',
             'generate_report': '#8b5cf6',
             'report_generated': '#8b5cf6',
             'change_password': '#ef4444',
             'update_profile': '#10b981',
+            'user_upgraded': '#8b5cf6',
+            'role_assigned': '#8b5cf6',
         }
         color = action_colors.get(obj.action, '#6b7280')
         return format_html('<span style="background-color: {}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">{}</span>', 
@@ -295,6 +326,6 @@ admin.site.register(User, UserAdmin)
 admin.site.register(ActivityLog, ActivityLogAdmin)
 
 # Custom admin site configuration
-admin.site.site_header = 'PTS Enterprise Admin Portal'
-admin.site.site_title = 'PTS Admin'
-admin.site.index_title = 'Welcome to Performance Tracking System Administration'
+admin.site.site_header = 'FME Performance Tracking System Admin'
+admin.site.site_title = 'FME PTS Admin'
+admin.site.index_title = 'Welcome to Federal Ministry of Environment Performance Tracking System'
