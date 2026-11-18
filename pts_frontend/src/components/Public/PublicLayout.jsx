@@ -20,7 +20,9 @@ import {
   BarChart3,
   Bell,
   MessageSquare,
-  LayoutDashboard
+  LayoutDashboard,
+  Activity,
+  Leaf
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import LandingFooter from '../Landing/LandingFooter';
@@ -31,19 +33,23 @@ const PublicLayout = () => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const location = useLocation();
-  const { user, logout, isAuthenticated, canAccessDashboard } = useAuth();
+  const { user, userRole, logout, isAuthenticated, canAccessDashboard } = useAuth();
 
-  // Mock notifications for public portal
+  // Check if user has dashboard access (staff roles)
+  const hasDashboardAccess = userRole && ['project_admin', 'delivery_officer', 'director', 'sector_expert'].includes(userRole);
+
+  // Mock notifications for public portal (would come from API)
   const notifications = [
-    { id: 1, title: 'New Comment', message: 'Someone replied to your comment', time: '2h ago', read: false, icon: '💬' },
-    { id: 2, title: 'Project Update', message: 'Health project status updated', time: '5h ago', read: false, icon: '📢' },
+    { id: 1, title: 'New Comment', message: 'Someone replied to your comment on Gully Erosion Project', time: '2h ago', read: false, icon: '💬' },
+    { id: 2, title: 'Project Update', message: 'NEWMAP project status updated to Ongoing', time: '5h ago', read: false, icon: '📢' },
+    { id: 3, title: 'New Project Added', message: 'A new environmental project has been added', time: '1d ago', read: true, icon: '🌱' },
   ];
 
   const unreadNotifications = notifications.filter(n => !n.read).length;
 
   const navigation = [
     { name: 'Home', href: '/', icon: Home },
-    { name: 'Projects', href: '/public/projects', icon: TrendingUp },
+    { name: 'Projects', href: '/public/projects', icon: Activity },
     { name: 'About', href: '/about', icon: Info },
     { name: 'Contact', href: '/contact', icon: Mail },
   ];
@@ -56,15 +62,22 @@ const PublicLayout = () => {
     window.location.href = '/';
   };
 
-  // Check if user has dashboard access (staff or superuser)
-  const hasDashboardAccess = user?.is_staff || user?.is_superuser || canAccessDashboard;
+  const getRoleDisplayName = () => {
+    switch(userRole) {
+      case 'project_admin': return 'Project Admin';
+      case 'delivery_officer': return 'Delivery Officer';
+      case 'director': return 'Director';
+      case 'sector_expert': return 'Sector Expert';
+      default: return 'Public User';
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/20 to-indigo-50/30 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-green-50/20 to-emerald-50/30 flex flex-col">
       {/* Animated Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-r from-primary-200/20 to-secondary-200/20 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-r from-blue-200/20 to-purple-200/20 rounded-full blur-3xl"></div>
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-r from-green-200/20 to-emerald-200/20 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-r from-blue-200/20 to-cyan-200/20 rounded-full blur-3xl"></div>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-r from-emerald-200/10 to-teal-200/10 rounded-full blur-3xl"></div>
       </div>
 
@@ -75,12 +88,12 @@ const PublicLayout = () => {
             {/* Logo Section */}
             <div className="flex items-center gap-2">
               <Link to="/" className="flex items-center gap-2 group">
-                <div className="bg-gradient-to-r from-primary-500 to-secondary-500 p-1.5 rounded-xl shadow-lg group-hover:scale-105 transition-transform">
-                  <TrendingUp className="w-6 h-6 text-white" />
+                <div className="bg-gradient-to-r from-green-500 to-emerald-500 p-1.5 rounded-xl shadow-lg group-hover:scale-105 transition-transform">
+                  <Leaf className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <span className="font-bold text-xl bg-gradient-to-r from-primary-600 to-secondary-600 bg-clip-text text-transparent">
-                    PTS
+                  <span className="font-bold text-xl bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                    EnvMonitor
                   </span>
                   <span className="text-xs text-gray-400 ml-1 hidden sm:inline">Public Portal</span>
                 </div>
@@ -97,8 +110,8 @@ const PublicLayout = () => {
                     to={item.href}
                     className={`relative px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 group ${
                       isActive(item.href)
-                        ? 'text-primary-600 bg-primary-50'
-                        : 'text-gray-600 hover:text-primary-600 hover:bg-gray-50'
+                        ? 'text-green-600 bg-green-50'
+                        : 'text-gray-600 hover:text-green-600 hover:bg-gray-50'
                     }`}
                   >
                     <div className="flex items-center gap-2">
@@ -106,7 +119,7 @@ const PublicLayout = () => {
                       {item.name}
                     </div>
                     {isActive(item.href) && (
-                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-gradient-to-r from-primary-500 to-secondary-500 rounded-full"></div>
+                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full"></div>
                     )}
                   </Link>
                 );
@@ -118,7 +131,7 @@ const PublicLayout = () => {
               {isAuthenticated && user ? (
                 <>
                   {/* Search Button */}
-                  <button className="p-2 rounded-lg text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition">
+                  <button className="p-2 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 transition">
                     <Search className="w-5 h-5" />
                   </button>
 
@@ -126,7 +139,7 @@ const PublicLayout = () => {
                   <div className="relative">
                     <button
                       onClick={() => setNotificationsOpen(!notificationsOpen)}
-                      className="relative p-2 rounded-lg text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition"
+                      className="relative p-2 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 transition"
                     >
                       <Bell className="w-5 h-5" />
                       {unreadNotifications > 0 && (
@@ -140,7 +153,7 @@ const PublicLayout = () => {
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setNotificationsOpen(false)} />
                         <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden">
-                          <div className="p-3 bg-gradient-to-r from-primary-500 to-secondary-600 text-white">
+                          <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white">
                             <h3 className="font-semibold text-sm">Notifications</h3>
                             <p className="text-xs text-white/80 mt-0.5">Stay updated with latest activities</p>
                           </div>
@@ -169,7 +182,7 @@ const PublicLayout = () => {
                       onClick={() => setUserMenuOpen(!userMenuOpen)}
                       className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-gray-100 transition"
                     >
-                      <div className="bg-gradient-to-r from-primary-500 to-secondary-500 rounded-full w-8 h-8 flex items-center justify-center shadow-md">
+                      <div className="bg-gradient-to-r from-green-500 to-emerald-500 rounded-full w-8 h-8 flex items-center justify-center shadow-md">
                         <span className="text-white font-semibold text-sm">
                           {user?.first_name?.charAt(0) || user?.email?.charAt(0) || 'U'}
                         </span>
@@ -179,7 +192,7 @@ const PublicLayout = () => {
                           {user?.first_name} {user?.last_name}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {hasDashboardAccess ? 'Staff User' : 'Public User'}
+                          {hasDashboardAccess ? getRoleDisplayName() : 'Public User'}
                         </p>
                       </div>
                       <ChevronDown className="w-4 h-4 text-gray-400 hidden lg:block" />
@@ -189,19 +202,25 @@ const PublicLayout = () => {
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
                         <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden">
-                          <div className="p-3 bg-gradient-to-r from-primary-500 to-secondary-600 text-white">
+                          <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white">
                             <p className="text-sm font-medium">Signed in as</p>
                             <p className="text-xs text-white/80 truncate">{user?.email}</p>
+                            {hasDashboardAccess && (
+                              <p className="text-[10px] text-white/70 mt-1 flex items-center gap-1">
+                                <Shield className="w-2.5 h-2.5" />
+                                {getRoleDisplayName()}
+                              </p>
+                            )}
                           </div>
                           <div className="py-2">
-                            {/* Dashboard Link - Only for staff/superuser */}
+                            {/* Dashboard Link - Only for staff roles */}
                             {hasDashboardAccess && (
                               <Link
                                 to="/dashboard"
                                 className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
                                 onClick={() => setUserMenuOpen(false)}
                               >
-                                <LayoutDashboard className="w-4 h-4 text-primary-500" />
+                                <LayoutDashboard className="w-4 h-4 text-green-500" />
                                 Dashboard
                               </Link>
                             )}
@@ -210,7 +229,7 @@ const PublicLayout = () => {
                               className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
                               onClick={() => setUserMenuOpen(false)}
                             >
-                              <User className="w-4 h-4 text-primary-500" />
+                              <User className="w-4 h-4 text-green-500" />
                               My Profile
                             </Link>
                             <Link
@@ -218,7 +237,7 @@ const PublicLayout = () => {
                               className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
                               onClick={() => setUserMenuOpen(false)}
                             >
-                              <MessageCircle className="w-4 h-4 text-primary-500" />
+                              <MessageCircle className="w-4 h-4 text-green-500" />
                               My Comments
                             </Link>
                             <div className="border-t border-gray-100 my-1"></div>
@@ -246,7 +265,7 @@ const PublicLayout = () => {
                   </Link>
                   <Link
                     to="/register"
-                    className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-primary-500 to-secondary-500 text-white text-sm font-medium hover:shadow-lg transition-all hover:scale-105"
+                    className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 text-white text-sm font-medium hover:shadow-lg transition-all hover:scale-105"
                   >
                     <User className="w-4 h-4" />
                     Join Discussion
@@ -257,7 +276,7 @@ const PublicLayout = () => {
               {/* Mobile Menu Button */}
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="md:hidden p-2 rounded-lg text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition"
+                className="md:hidden p-2 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 transition"
               >
                 {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
@@ -276,7 +295,7 @@ const PublicLayout = () => {
                   to={item.href}
                   className={`flex items-center gap-3 px-4 py-3 text-sm transition ${
                     isActive(item.href)
-                      ? 'text-primary-600 bg-primary-50'
+                      ? 'text-green-600 bg-green-50'
                       : 'text-gray-600 hover:bg-gray-50'
                   }`}
                   onClick={() => setMobileMenuOpen(false)}
@@ -301,7 +320,7 @@ const PublicLayout = () => {
                   </Link>
                   <Link
                     to="/register"
-                    className="flex items-center gap-3 px-4 py-3 text-sm text-primary-600 hover:bg-primary-50 transition"
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-green-600 hover:bg-green-50 transition"
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     <User className="w-4 h-4" />
@@ -313,7 +332,7 @@ const PublicLayout = () => {
               <>
                 <div className="border-t border-gray-100 mt-2 pt-2">
                   <div className="px-4 py-3 flex items-center gap-3">
-                    <div className="bg-gradient-to-r from-primary-500 to-secondary-500 rounded-full w-8 h-8 flex items-center justify-center">
+                    <div className="bg-gradient-to-r from-green-500 to-emerald-500 rounded-full w-8 h-8 flex items-center justify-center">
                       <span className="text-white font-semibold text-sm">
                         {user?.first_name?.charAt(0) || user?.email?.charAt(0) || 'U'}
                       </span>
@@ -321,8 +340,8 @@ const PublicLayout = () => {
                     <div>
                       <p className="text-sm font-medium text-gray-900">{user?.first_name} {user?.last_name}</p>
                       <p className="text-xs text-gray-500">{user?.email}</p>
-                      <p className="text-xs text-primary-600 mt-0.5">
-                        {hasDashboardAccess ? 'Staff Account' : 'Public User'}
+                      <p className="text-xs text-green-600 mt-0.5">
+                        {hasDashboardAccess ? getRoleDisplayName() : 'Public User'}
                       </p>
                     </div>
                   </div>
@@ -334,7 +353,7 @@ const PublicLayout = () => {
                       className="flex items-center gap-3 px-4 py-3 text-sm text-gray-600 hover:bg-gray-50 transition"
                       onClick={() => setMobileMenuOpen(false)}
                     >
-                      <LayoutDashboard className="w-4 h-4 text-primary-500" />
+                      <LayoutDashboard className="w-4 h-4 text-green-500" />
                       Dashboard
                     </Link>
                   )}

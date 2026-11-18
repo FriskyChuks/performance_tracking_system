@@ -1,7 +1,7 @@
 // src/components/Auth/Register.jsx
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, User, TrendingUp, Building2, Landmark, Phone } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, User, TrendingUp, Building2, Landmark, Phone, MapPin } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import mainApi from '../../services/mainApi';
 import Navbar from '../Layout/Navbar';
@@ -14,15 +14,15 @@ const Register = () => {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
-    confirmPassword: '',
+    password2: '',  // Changed from confirmPassword to password2
     first_name: '',
     last_name: '',
     phone: '',
     location: ''
   });
   const [departmentData, setDepartmentData] = useState({
-    department_id: '',
-    agency_id: ''
+    assigned_department: '',
+    assigned_agency: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -30,6 +30,7 @@ const Register = () => {
   const [agenciesList, setAgenciesList] = useState([]);
   const [assignmentType, setAssignmentType] = useState('none');
   const [dropdownLoading, setDropdownLoading] = useState(true);
+
   const { register } = useAuth();
   const navigate = useNavigate();
 
@@ -40,15 +41,14 @@ const Register = () => {
   const fetchDropdownData = async () => {
     try {
       setDropdownLoading(true);
-      const [deptRes, agencyRes] = await Promise.all([
-        mainApi.departments.list(),
-        mainApi.agencies.list()
+      const [departments, agencies] = await Promise.all([
+        mainApi.getPublicDepartments(),
+        mainApi.getPublicAgencies()
       ]);
-      setDepartmentsList(deptRes.data);
-      setAgenciesList(agencyRes.data);
+      setDepartmentsList(departments || []);
+      setAgenciesList(agencies || []);
     } catch (error) {
       console.error('Error fetching dropdown data:', error);
-      // Don't show error to user, just log it
     } finally {
       setDropdownLoading(false);
     }
@@ -64,17 +64,15 @@ const Register = () => {
 
   const handleDepartmentChange = (e) => {
     setDepartmentData({
-      ...departmentData,
-      department_id: e.target.value,
-      agency_id: '' // Clear agency when department is selected
+      assigned_department: e.target.value,
+      assigned_agency: ''
     });
   };
 
   const handleAgencyChange = (e) => {
     setDepartmentData({
-      ...departmentData,
-      agency_id: e.target.value,
-      department_id: '' // Clear department when agency is selected
+      assigned_agency: e.target.value,
+      assigned_department: ''
     });
   };
 
@@ -99,8 +97,14 @@ const Register = () => {
       setError('Password must be at least 6 characters');
       return false;
     }
-    if (formData.password !== formData.confirmPassword) {
+    if (formData.password !== formData.password2) {
       setError('Passwords do not match');
+      return false;
+    }
+    // Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      setError('Please enter a valid email address');
       return false;
     }
     return true;
@@ -117,21 +121,22 @@ const Register = () => {
     setError('');
     
     try {
-      // Prepare registration data
+      // Prepare registration data matching backend serializer
       const registerData = {
         email: formData.email,
         password: formData.password,
+        password2: formData.password2,  // Backend expects password2
         first_name: formData.first_name,
         last_name: formData.last_name,
         phone: formData.phone || '',
-        location: formData.location || ''
+        // role defaults to 'public_user' in backend
       };
       
-      // Only add department_id or agency_id if actually selected
-      if (assignmentType === 'department' && departmentData.department_id) {
-        registerData.department_id = departmentData.department_id;
-      } else if (assignmentType === 'agency' && departmentData.agency_id) {
-        registerData.agency_id = departmentData.agency_id;
+      // Only add assigned_department or assigned_agency if actually selected
+      if (assignmentType === 'department' && departmentData.assigned_department) {
+        registerData.assigned_department = parseInt(departmentData.assigned_department);
+      } else if (assignmentType === 'agency' && departmentData.assigned_agency) {
+        registerData.assigned_agency = parseInt(departmentData.assigned_agency);
       }
       
       console.log('Registering with data:', registerData);
@@ -157,13 +162,13 @@ const Register = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-primary-50 via-white to-secondary-50">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-green-50 via-white to-emerald-50">
       <Navbar />
       <div className="flex-1 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-md w-full space-y-8 animate-slide-up">
           <div>
             <div className="flex justify-center">
-              <div className="bg-gradient-to-r from-primary-600 to-secondary-600 p-3 rounded-full">
+              <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-3 rounded-full shadow-lg">
                 <TrendingUp className="w-12 h-12 text-white" />
               </div>
             </div>
@@ -197,7 +202,7 @@ const Register = () => {
                       required
                       value={formData.first_name}
                       onChange={handleChange}
-                      className="input-field pl-10"
+                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                       placeholder="John"
                       autoComplete="given-name"
                     />
@@ -217,7 +222,7 @@ const Register = () => {
                       required
                       value={formData.last_name}
                       onChange={handleChange}
-                      className="input-field pl-10"
+                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                       placeholder="Doe"
                       autoComplete="family-name"
                     />
@@ -238,7 +243,7 @@ const Register = () => {
                     required
                     value={formData.email}
                     onChange={handleChange}
-                    className="input-field pl-10"
+                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                     placeholder="you@example.com"
                     autoComplete="email"
                   />
@@ -257,7 +262,7 @@ const Register = () => {
                     type="tel"
                     value={formData.phone}
                     onChange={handleChange}
-                    className="input-field pl-10"
+                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                     placeholder="+234 123 456 7890"
                   />
                 </div>
@@ -268,14 +273,14 @@ const Register = () => {
                   Location (Optional)
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input
                     id="location"
                     name="location"
                     type="text"
                     value={formData.location}
                     onChange={handleChange}
-                    className="input-field pl-10"
+                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                     placeholder="Your city/community"
                   />
                 </div>
@@ -290,11 +295,11 @@ const Register = () => {
                     type="button"
                     onClick={() => {
                       setAssignmentType('department');
-                      setDepartmentData({ department_id: '', agency_id: '' });
+                      setDepartmentData({ assigned_department: '', assigned_agency: '' });
                     }}
                     className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
                       assignmentType === 'department' 
-                        ? 'bg-primary-600 text-white' 
+                        ? 'bg-green-600 text-white' 
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
@@ -305,11 +310,11 @@ const Register = () => {
                     type="button"
                     onClick={() => {
                       setAssignmentType('agency');
-                      setDepartmentData({ department_id: '', agency_id: '' });
+                      setDepartmentData({ assigned_department: '', assigned_agency: '' });
                     }}
                     className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
                       assignmentType === 'agency' 
-                        ? 'bg-primary-600 text-white' 
+                        ? 'bg-green-600 text-white' 
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
@@ -320,11 +325,11 @@ const Register = () => {
                     type="button"
                     onClick={() => {
                       setAssignmentType('none');
-                      setDepartmentData({ department_id: '', agency_id: '' });
+                      setDepartmentData({ assigned_department: '', assigned_agency: '' });
                     }}
                     className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
                       assignmentType === 'none' 
-                        ? 'bg-primary-600 text-white' 
+                        ? 'bg-green-600 text-white' 
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
@@ -342,15 +347,18 @@ const Register = () => {
                     Select Department
                   </label>
                   <select
-                    value={departmentData.department_id}
+                    value={departmentData.assigned_department}
                     onChange={handleDepartmentChange}
-                    className="input-field"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition bg-white"
                   >
                     <option value="">Select a department</option>
                     {departmentsList.map(dept => (
                       <option key={dept.id} value={dept.id}>{dept.name}</option>
                     ))}
                   </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Select if you're registering as a department staff member
+                  </p>
                 </div>
               )}
               
@@ -360,15 +368,18 @@ const Register = () => {
                     Select Agency
                   </label>
                   <select
-                    value={departmentData.agency_id}
+                    value={departmentData.assigned_agency}
                     onChange={handleAgencyChange}
-                    className="input-field"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition bg-white"
                   >
                     <option value="">Select an agency</option>
                     {agenciesList.map(agency => (
                       <option key={agency.id} value={agency.id}>{agency.name}</option>
                     ))}
                   </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Select if you're registering as an agency staff member
+                  </p>
                 </div>
               )}
               
@@ -385,7 +396,7 @@ const Register = () => {
                     required
                     value={formData.password}
                     onChange={handleChange}
-                    className="input-field pl-10 pr-10"
+                    className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                     placeholder="•••••••• (min. 6 characters)"
                     autoComplete="new-password"
                   />
@@ -397,22 +408,23 @@ const Register = () => {
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
+                <p className="text-xs text-gray-400 mt-1">Minimum 6 characters</p>
               </div>
               
               <div>
-                <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="password2" className="block text-sm font-medium text-gray-700 mb-2">
                   Confirm Password *
                 </label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input
-                    id="confirmPassword"
-                    name="confirmPassword"
+                    id="password2"
+                    name="password2"
                     type={showConfirmPassword ? 'text' : 'password'}
                     required
-                    value={formData.confirmPassword}
+                    value={formData.password2}
                     onChange={handleChange}
-                    className="input-field pl-10 pr-10"
+                    className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                     placeholder="••••••••"
                     autoComplete="new-password"
                   />
@@ -431,11 +443,12 @@ const Register = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="btn-primary w-full py-3 relative"
+                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 {loading ? (
                   <div className="flex items-center justify-center">
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    <span className="ml-2">Creating account...</span>
                   </div>
                 ) : (
                   'Create Account'
@@ -446,15 +459,19 @@ const Register = () => {
             <div className="text-center">
               <p className="text-sm text-gray-600">
                 Already have an account?{' '}
-                <Link to="/login" className="font-medium text-primary-600 hover:text-primary-500">
+                <Link to="/login" className="font-medium text-green-600 hover:text-green-500">
                   Sign in
                 </Link>
               </p>
             </div>
+            
+            <div className="text-center text-xs text-gray-400">
+              By creating an account, you agree to our Terms of Service and Privacy Policy
+            </div>
           </form>
         </div>
       </div>
-      <Footer />
+      {/* <Footer /> */}
     </div>
   );
 };

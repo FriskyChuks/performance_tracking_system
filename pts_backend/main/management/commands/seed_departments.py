@@ -21,7 +21,10 @@ class Command(BaseCommand):
         for name, code, desc in departments:
             obj, created = Department.objects.get_or_create(
                 name=name,
-                defaults={"code": code, "description": desc}
+                defaults={
+                    "code": code,
+                    "description": desc
+                }
             )
 
             if created:

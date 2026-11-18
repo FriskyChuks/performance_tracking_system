@@ -3,13 +3,13 @@ import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 
-const PrivateRoute = ({ children, requireAdmin = false }) => {
-  const { isAuthenticated, loading, user, canAccessDashboard } = useAuth();
+const PrivateRoute = ({ children, requiredRole = null, allowedRoles = [] }) => {
+  const { isAuthenticated, loading, userRole, canAccessDashboard } = useAuth();
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
       </div>
     );
   }
@@ -24,8 +24,13 @@ const PrivateRoute = ({ children, requireAdmin = false }) => {
     return <Navigate to="/public" replace />;
   }
 
-  // Check admin requirement if needed
-  if (requireAdmin && !user?.is_staff && !user?.is_superuser) {
+  // Check for specific role requirement
+  if (requiredRole && userRole !== requiredRole) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // Check for allowed roles (if provided)
+  if (allowedRoles.length > 0 && !allowedRoles.includes(userRole)) {
     return <Navigate to="/dashboard" replace />;
   }
 

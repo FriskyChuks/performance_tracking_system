@@ -1,415 +1,463 @@
-// src/components/Dashboard/MyTasks.jsx
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { 
-  TrendingUp, 
-  Calendar, 
-  Building2, 
-  Target,
-  Clock,
-  CheckCircle,
-  XCircle,
-  Send,
-  Eye,
-  Edit,
-  AlertCircle,
-  Search,
-  Filter,
-  RefreshCw,
-  Save
-} from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AlertCircle, Search, RefreshCw, CheckCircle2, Building2, Briefcase } from 'lucide-react';
 import mainApi from '../../services/mainApi';
 import { useAuth } from '../../hooks/useAuth';
 import toast from 'react-hot-toast';
 
+import KpiStrip from './MyTasks/KpiStrip';
+import ViewModeToggle from './MyTasks/ViewModeToggle';
+import ActivityCard from './MyTasks/ActivityCard';
+import { card, cardPad, inputBase, btn } from './MyTasks/tokens';
+
+const VIEW_MODE_KEY = 'mytasks_view_mode';
+
+// Extract a readable message from a DRF error response
+const extractApiError = (err, fallback = 'Something went wrong') => {
+  const data = err?.response?.data;
+  if (!data) return err?.message || fallback;
+  if (typeof data === 'string') return data;
+  if (data.detail) return data.detail;
+  const parts = [];
+  Object.entries(data).forEach(([field, value]) => {
+    if (Array.isArray(value)) parts.push(`${field}: ${value.join(' ')}`);
+    else if (typeof value === 'string') parts.push(`${field}: ${value}`);
+  });
+  return parts.length ? parts.join(' | ') : fallback;
+};
+
 const MyTasks = () => {
-  const { user } = useAuth();
+  const { user, userRole } = useAuth();
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState([]);
+  const isDeliveryOfficer = userRole === 'delivery_officer';
+
+  // ------- data -------
+  const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // ------- filters/view -------
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [expandedTask, setExpandedTask] = useState(null);
-  const [updating, setUpdating] = useState(false);
-  const [actualValues, setActualValues] = useState({});
-  const [submitting, setSubmitting] = useState({});
+  const [viewMode, setViewMode] = useState(
+    () => localStorage.getItem(VIEW_MODE_KEY) || 'compact'
+  );
+
+  // ------- expanded activity (single at a time) -------
+  const [expandedActivityId, setExpandedActivityId] = useState(null);
+
+  // ------- quarter editing (single at a time, no data loss on switch) -------
+  const [editingQuarterKey, setEditingQuarterKey] = useState(null); // `${activityId}_${indicatorId}_${quarter}`
+  const [draftValue, setDraftValue] = useState('');
+  const [savingQuarterId, setSavingQuarterId] = useState(null);
+
+  // ------- location -------
+  const [locationForm, setLocationForm] = useState({
+    latitude: '',
+    longitude: '',
+    address: '',
+    description: '',
+  });
+  const [savingLocation, setSavingLocation] = useState(false);
+
+  // ------- images -------
+  const [activityImages, setActivityImages] = useState({});
+
+  const assignedDepartment = user?.assigned_department;
+  const assignedAgency = user?.assigned_agency;
+  const assignedEntityName =
+    assignedDepartment?.name || assignedAgency?.name || 'your department/agency';
+
+  // Persist view mode
+  useEffect(() => {
+    localStorage.setItem(VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
 
   useEffect(() => {
-    fetchMyTasks();
-  }, []);
+    if (isDeliveryOfficer) fetchMyTasks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDeliveryOfficer]);
 
+  // When a new activity expands, hydrate its location form
+  useEffect(() => {
+    if (!expandedActivityId) return;
+    const activity = activities.find((a) => a.id === expandedActivityId);
+    if (activity) {
+      setLocationForm({
+        latitude: activity.latitude || '',
+        longitude: activity.longitude || '',
+        address: activity.location_address || '',
+        description: activity.location_description || '',
+      });
+    }
+  }, [expandedActivityId, activities]);
+
+  // ------- fetch (real API, server is source of truth) -------
   const fetchMyTasks = async () => {
+    setLoading(true);
+    setError(null);
+
     try {
-      setLoading(true);
-      const response = await mainApi.initiatives.list();
-      let allInitiatives = response.data.results || response.data;
-      
-      // Filter initiatives based on staff's assigned department or agency
-      let filteredInitiatives = [];
-      
-      if (user?.assigned_agency) {
-        const targetAgencyId = typeof user.assigned_agency === 'object' 
-          ? user.assigned_agency.id 
-          : parseInt(user.assigned_agency);
-        
-        filteredInitiatives = allInitiatives.filter(i => {
-          const initiativeAgencyId = i.agency ? parseInt(i.agency) : null;
-          return initiativeAgencyId === targetAgencyId;
-        });
-      } else if (user?.assigned_department) {
-        const targetDeptId = typeof user.assigned_department === 'object' 
-          ? user.assigned_department.id 
-          : parseInt(user.assigned_department);
-        
-        filteredInitiatives = allInitiatives.filter(i => {
-          const initiativeDeptId = i.department ? parseInt(i.department) : null;
-          return initiativeDeptId === targetDeptId;
-        });
+      const [activitiesResponse, progressResponse] = await Promise.all([
+        mainApi.getMyActivities(),
+        mainApi.getMyProgressList(),
+      ]);
+
+      const assignedActivities = activitiesResponse?.results || activitiesResponse || [];
+      const allProgress = progressResponse?.results || progressResponse || [];
+
+      if (assignedActivities.length === 0) {
+        setActivities([]);
+        return;
       }
-      
-      // Enrich with quarterly progress data
-      const tasksWithProgress = await Promise.all(
-        filteredInitiatives.map(async (initiative) => {
-          try {
-            const quartersRes = await mainApi.quarterlyProgress.getByInitiative(initiative.id);
-            const quarters = quartersRes.data || [];
-            
-            const totalQuarters = quarters.length;
-            const submittedQuarters = quarters.filter(q => q.status === 'submitted').length;
-            const approvedQuarters = quarters.filter(q => q.status === 'approved').length;
-            const draftQuarters = quarters.filter(q => q.status === 'draft').length;
-            
-            const now = new Date();
-            const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
-            const currentYear = now.getFullYear();
-            const currentQuarterData = quarters.find(q => q.quarter === currentQuarter && q.year === currentYear);
-            
-            // Initialize actual values state
-            quarters.forEach(q => {
-              if (!actualValues[q.id]) {
-                setActualValues(prev => ({ ...prev, [q.id]: q.actual_value || '' }));
-              }
-            });
-            
-            return {
-              ...initiative,
-              quarters,
-              progressSummary: {
-                total: totalQuarters,
-                draft: draftQuarters,
-                submitted: submittedQuarters,
-                approved: approvedQuarters,
-                completionRate: totalQuarters > 0 ? Math.round((approvedQuarters / totalQuarters) * 100) : 0
-              },
-              currentQuarter: currentQuarterData,
-              needsAttention: draftQuarters > 0 && currentQuarterData?.status === 'draft'
-            };
-          } catch (error) {
-            console.error(`Error fetching quarters for initiative ${initiative.id}:`, error);
-            return { 
-              ...initiative, 
-              quarters: [], 
-              progressSummary: { total: 0, draft: 0, submitted: 0, approved: 0, completionRate: 0 } 
-            };
+
+      const enriched = await Promise.all(
+        assignedActivities.map(async (activity) => {
+          const fullActivity = await mainApi.getPublicActivityDetail(activity.id);
+          const activityIndicators = fullActivity?.indicators || activity.indicators || [];
+
+          if (mainApi.getActivityImages) {
+            try {
+              const imgs = await mainApi.getActivityImages(activity.id);
+              setActivityImages((prev) => ({ ...prev, [activity.id]: imgs || [] }));
+            } catch (err) {
+              console.error('Error fetching images:', err);
+            }
           }
+
+          const activityProgress = allProgress.filter((p) => p.activity === activity.id);
+
+          const indicatorsWithProgress = activityIndicators.map((indicator) => {
+            const annualTarget = parseFloat(indicator.target_value) || 0;
+            const quarterlyTarget = annualTarget / 4;
+
+            const rows = activityProgress
+              .filter((p) => p.indicator === indicator.id)
+              .sort((a, b) => a.year - b.year || a.quarter - b.quarter);
+
+            const currentYear = new Date().getFullYear();
+            const yearRows = rows.filter((r) => r.year === currentYear);
+            const effective = yearRows.length > 0 ? yearRows : rows;
+
+            const quarters = [1, 2, 3, 4].map((q) => {
+              const row = effective.find((r) => r.quarter === q);
+              return {
+                id: row?.id ?? null,
+                quarter: q,
+                year: row?.year ?? currentYear,
+                quarterly_target: quarterlyTarget,
+                annual_target: annualTarget,
+                actual_value: row?.actual_value ?? null,
+                status: row?.status ?? 'draft',
+                cumulative_percentage: row?.cumulative_percentage ?? 0,
+                staff_comment: row?.staff_comment || '',
+                expert_rating: row?.expert_rating ?? null,
+                // NEW:
+                rejection_reason: row?.rejection_reason || '',
+                rejection_category: row?.rejection_category || '',
+                rejected_by_name: row?.rejected_by_name || '',
+                rejected_at: row?.rejected_at || null,
+                can_edit: row?.status === 'draft',
+              };
+            });
+
+            const actualTotal = quarters.reduce(
+              (s, q) => s + (parseFloat(q.actual_value) || 0),
+              0
+            );
+            const overallAchievement = annualTarget > 0 ? (actualTotal / annualTarget) * 100 : 0;
+
+            return {
+              id: indicator.id,
+              name: indicator.name,
+              unit: indicator.unit || '',
+              annual_target: annualTarget,
+              quarterly_target: quarterlyTarget,
+              quarters,
+              actual_total: actualTotal,
+              overall_achievement: overallAchievement,
+            };
+          });
+
+          const allQ = indicatorsWithProgress.flatMap((i) => i.quarters);
+          const total = allQ.length;
+          const draft = allQ.filter((q) => q.status === 'draft').length;
+          const rejected = allQ.filter((q) => q.status === 'rejected').length;
+          const submitted = allQ.filter((q) => q.status === 'submitted').length;
+          const approved = allQ.filter((q) => q.status === 'approved').length;
+          const assessed = allQ.filter((q) => q.status === 'assessed').length;
+
+          const currentQuarter = Math.floor(new Date().getMonth() / 3) + 1;
+          const cur = allQ.find((q) => q.quarter === currentQuarter);
+          const needsAttention = cur?.status === 'draft' || cur?.status === 'rejected';
+
+          return {
+            ...activity,
+            indicators: indicatorsWithProgress,
+            progressSummary: {
+              total,
+              draft,
+              rejected,
+              submitted,
+              approved,
+              assessed,
+              completionRate: total > 0 ? Math.round((approved / total) * 100) : 0,
+            },
+            needsAttention,
+          };
         })
       );
-      
-      setTasks(tasksWithProgress);
-    } catch (error) {
-      console.error('Error fetching tasks:', error);
-      toast.error('Failed to load tasks');
+
+      setActivities(enriched);
+    } catch (err) {
+      console.error('Error fetching tasks:', err);
+      setError(err.message || 'Failed to load your tasks');
+      toast.error('Failed to load your tasks. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleActualValueChange = (quarterId, value) => {
-    setActualValues(prev => ({ ...prev, [quarterId]: value }));
+  // ------- quarter editing actions -------
+  const handleStartEdit = (activityId, indicatorId, quarter, currentValue) => {
+    const key = `${activityId}_${indicatorId}_${quarter}`;
+    setEditingQuarterKey(key);
+    setDraftValue(currentValue == null ? '' : String(currentValue));
   };
 
-  const handleUpdateActual = async (quarterId) => {
-    const actualValue = actualValues[quarterId];
-    
-    if (!actualValue) {
-      toast.error('Please enter actual value');
+  const handleCancelEdit = () => {
+    setEditingQuarterKey(null);
+    setDraftValue('');
+  };
+
+  const handleSave = async (activityId, indicatorId, quarter, quarterId) => {
+    if (draftValue === '' || draftValue == null) {
+      toast.error('Please enter an actual value');
       return;
     }
-    
-    setSubmitting(prev => ({ ...prev, [quarterId]: true }));
+    const parsed = parseFloat(draftValue);
+    if (isNaN(parsed) || parsed < 0) {
+      toast.error('Actual value must be a non-negative number');
+      return;
+    }
+    if (!quarterId) {
+      toast.error('Progress record not found — try refreshing');
+      return;
+    }
+
+    setSavingQuarterId(quarterId);
     try {
-      await mainApi.quarterlyProgress.updateActual(quarterId, { actual_value: parseFloat(actualValue) });
-      toast.success('Actual value updated successfully');
-      fetchMyTasks();
-    } catch (error) {
-      console.error('Error updating actual:', error);
-      toast.error(error.response?.data?.error || 'Failed to update actual value');
+      await mainApi.updateQuarterlyProgress(quarterId, { actual_value: parsed });
+      toast.success('Saved and submitted for review');
+      setEditingQuarterKey(null);
+      setDraftValue('');
+      await fetchMyTasks();
+    } catch (err) {
+      console.error('Error saving actual:', err);
+      toast.error(extractApiError(err, 'Failed to save actual value'));
     } finally {
-      setSubmitting(prev => ({ ...prev, [quarterId]: false }));
+      setSavingQuarterId(null);
     }
   };
 
-  const handleSubmitForReview = async (quarterId) => {
-    setSubmitting(prev => ({ ...prev, [quarterId]: true }));
+  // ------- location -------
+  const handleLocationFieldChange = (partial) => {
+    setLocationForm((prev) => ({ ...prev, ...partial }));
+  };
+
+  const handleSaveLocation = async (activityId) => {
+    setSavingLocation(true);
     try {
-      await mainApi.quarterlyProgress.submitForReview(quarterId);
-      toast.success('Quarter submitted for review successfully');
-      fetchMyTasks();
-    } catch (error) {
-      console.error('Error submitting for review:', error);
-      toast.error(error.response?.data?.error || 'Failed to submit for review');
+      await mainApi.updateActivityLocation(activityId, {
+        latitude: locationForm.latitude || null,
+        longitude: locationForm.longitude || null,
+        location_address: locationForm.address || '',
+        location_description: locationForm.description || '',
+      });
+      toast.success('Location saved successfully');
+      await fetchMyTasks();
+    } catch (err) {
+      console.error('Error saving location:', err);
+      toast.error(extractApiError(err, 'Failed to save location'));
     } finally {
-      setSubmitting(prev => ({ ...prev, [quarterId]: false }));
+      setSavingLocation(false);
     }
   };
 
-  const getStatusBadge = (status) => {
-    const config = {
-      'draft': { label: 'Pending Update', icon: <Clock className="w-3 h-3" />, color: 'bg-yellow-100 text-yellow-700' },
-      'submitted': { label: 'Under Review', icon: <Send className="w-3 h-3" />, color: 'bg-blue-100 text-blue-700' },
-      'approved': { label: 'Approved', icon: <CheckCircle className="w-3 h-3" />, color: 'bg-green-100 text-green-700' },
-      'rejected': { label: 'Rejected', icon: <XCircle className="w-3 h-3" />, color: 'bg-red-100 text-red-700' }
-    };
-    const c = config[status] || config.draft;
-    return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${c.color}`}>{c.icon} {c.label}</span>;
-  };
+  // ------- filtering -------
+  const filteredActivities = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return activities.filter((activity) => {
+      const matchesSearch = !term || activity.title?.toLowerCase().includes(term);
+      const s = activity.progressSummary;
+      const matchesFilter =
+        filterStatus === 'all' ||
+        (filterStatus === 'pending' && (s.draft > 0 || s.rejected > 0)) ||
+        (filterStatus === 'in_progress' && s.submitted > 0) ||
+        (filterStatus === 'completed' && s.approved + s.assessed === s.total && s.total > 0);
+      return matchesSearch && matchesFilter;
+    });
+  }, [activities, searchTerm, filterStatus]);
 
-  const filteredTasks = tasks.filter(task => {
-    const matchesSearch = task.title.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = filterStatus === 'all' || 
-      (filterStatus === 'pending' && task.progressSummary.draft > 0) ||
-      (filterStatus === 'in_progress' && task.progressSummary.submitted > 0) ||
-      (filterStatus === 'completed' && task.progressSummary.approved === task.progressSummary.total);
-    return matchesSearch && matchesFilter;
-  });
+  // ------- access gate -------
+  if (!isDeliveryOfficer) {
+    return (
+      <div className={`${card} ${cardPad} text-center`}>
+        <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+        <h3 className="text-base font-medium text-gray-900 mb-1">Access Restricted</h3>
+        <p className="text-sm text-gray-500">
+          This page is only accessible to Delivery Officers.
+        </p>
+      </div>
+    );
+  }
 
+  // ------- loading / error / empty -------
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
-          <p className="text-gray-500">Loading your tasks...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mx-auto mb-4" />
+          <p className="text-gray-500">Loading your tasks…</p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">My Tasks</h1>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Initiatives assigned to {user?.assigned_department?.name || user?.assigned_agency?.name || 'you'}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button 
-              onClick={fetchMyTasks}
-              className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg transition"
-              title="Refresh"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-            <div className="bg-gradient-to-br from-teal-600 to-teal-700 p-2 rounded-lg shadow-md">
-              <CheckCircle className="w-5 h-5 text-white" />
-            </div>
-          </div>
+  if (error) {
+    return (
+      <div className={`${card} ${cardPad} text-center`}>
+        <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+        <h3 className="text-base font-medium text-gray-900 mb-1">Error loading tasks</h3>
+        <p className="text-sm text-gray-500 mb-4">{error}</p>
+        <button onClick={fetchMyTasks} className={btn.primary}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  const header = (
+    <div className={`${card} ${cardPad}`}>
+      <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-bold text-gray-900">My Tasks</h1>
+          <p className="text-xs text-gray-500 mt-0.5 truncate">
+            Activities assigned to {assignedEntityName}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ViewModeToggle value={viewMode} onChange={setViewMode} />
+          <button
+            onClick={fetchMyTasks}
+            className="p-2.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded-xl transition"
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
         </div>
       </div>
+      <div className="mt-3 flex items-center gap-2 text-[11px] text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+        {assignedDepartment ? (
+          <Building2 className="w-3.5 h-3.5" />
+        ) : (
+          <Briefcase className="w-3.5 h-3.5" />
+        )}
+        <span>
+          Assigned to <span className="font-semibold text-gray-800">{assignedEntityName}</span>
+        </span>
+        <span className="ml-auto text-emerald-700 font-semibold">
+          {activities.length} activit{activities.length === 1 ? 'y' : 'ies'}
+        </span>
+      </div>
+    </div>
+  );
 
-      {/* Search and Filter */}
-      <div className="flex flex-col sm:flex-row gap-3">
+  if (activities.length === 0) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <div className={`${card} ${cardPad} text-center`}>
+          <CheckCircle2 className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+          <h3 className="text-base font-medium text-gray-900 mb-1">No tasks assigned</h3>
+          <p className="text-sm text-gray-500">
+            You don't have any activities assigned to {assignedEntityName} at the moment.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ------- main render -------
+  return (
+    <div className="space-y-4">
+      {header}
+
+      <KpiStrip activities={activities} />
+
+      {/* Search + filter */}
+      <div className="flex flex-col sm:flex-row gap-2">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
           <input
             type="text"
-            placeholder="Search tasks by title..."
+            placeholder="Search tasks by title…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
+            className={`${inputBase} pl-9`}
           />
         </div>
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+          className={`${inputBase} sm:w-52`}
         >
-          <option value="all">All Tasks</option>
-          <option value="pending">Pending Update</option>
-          <option value="in_progress">Under Review</option>
+          <option value="all">All tasks</option>
+          <option value="pending">Pending update</option>
+          <option value="in_progress">Under review</option>
           <option value="completed">Completed</option>
         </select>
       </div>
 
-      {/* Tasks List */}
-      {filteredTasks.length === 0 ? (
-        <div className="bg-white rounded-xl p-8 text-center border border-gray-200">
-          <CheckCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <h3 className="text-base font-medium text-gray-900 mb-1">No tasks assigned</h3>
-          <p className="text-sm text-gray-500">You don't have any initiatives to work on at the moment.</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {filteredTasks.map((task) => (
-            <div
-              key={task.id}
-              className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all"
-            >
-              {/* Task Header */}
-              <div
-                className="p-4 cursor-pointer hover:bg-gray-50 transition"
-                onClick={() => setExpandedTask(expandedTask === task.id ? null : task.id)}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                        task.initiative_type === 'project' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-                      }`}>
-                        {task.initiative_type === 'project' ? '📋 Project' : '📊 Program'}
-                      </span>
-                      {task.needsAttention && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                          <AlertCircle className="w-3 h-3" />
-                          Needs Update
-                        </span>
-                      )}
-                    </div>
-                    <h3 className="text-base font-semibold text-gray-900">{task.title}</h3>
-                    <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-gray-500">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        Started: {new Date(task.start_date).toLocaleDateString()}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Target className="w-3 h-3" />
-                        Progress: {task.progressSummary.completionRate}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-medium text-gray-900 mb-1">
-                      {task.progressSummary.approved}/{task.progressSummary.total} Quarters
-                    </div>
-                    <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-teal-500 rounded-full transition-all"
-                        style={{ width: `${task.progressSummary.completionRate}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Expanded Content - Quarterly Progress */}
-              {expandedTask === task.id && (
-                <div className="border-t border-gray-100 p-4 bg-gray-50">
-                  <h4 className="text-sm font-semibold text-gray-900 mb-3">Quarterly Progress</h4>
-                  {task.quarters.length === 0 ? (
-                    <div className="text-center py-4 text-gray-500 text-sm">
-                      No quarterly data available
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {task.quarters.map((quarter) => (
-                        <div key={quarter.id} className="bg-white rounded-lg p-3 border border-gray-200">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-gray-900">
-                                Q{quarter.quarter} {quarter.year}
-                              </span>
-                              {getStatusBadge(quarter.status)}
-                            </div>
-                            <span className="text-sm text-gray-500">
-                              Target: {quarter.target_value} {quarter.unit_of_measure}
-                            </span>
-                          </div>
-                          
-                          {/* Actual Value Input - Only for draft status */}
-                          {quarter.status === 'draft' && (
-                            <div className="space-y-2 mt-2">
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  value={actualValues[quarter.id] !== undefined ? actualValues[quarter.id] : quarter.actual_value || ''}
-                                  onChange={(e) => handleActualValueChange(quarter.id, e.target.value)}
-                                  className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                                  placeholder="Enter actual value"
-                                  step="0.01"
-                                />
-                                <button
-                                  onClick={() => handleUpdateActual(quarter.id)}
-                                  disabled={submitting[quarter.id]}
-                                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm flex items-center gap-1 disabled:opacity-50"
-                                >
-                                  {submitting[quarter.id] ? (
-                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                                  ) : (
-                                    <Save className="w-3.5 h-3.5" />
-                                  )}
-                                  Save
-                                </button>
-                              </div>
-                              <div className="flex justify-end">
-                                <button
-                                  onClick={() => handleSubmitForReview(quarter.id)}
-                                  disabled={submitting[quarter.id] || !actualValues[quarter.id]}
-                                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm flex items-center gap-1 disabled:opacity-50"
-                                >
-                                  {submitting[quarter.id] ? (
-                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                                  ) : (
-                                    <Send className="w-3.5 h-3.5" />
-                                  )}
-                                  Submit for Review
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Display actual value for non-draft status */}
-                          {quarter.status !== 'draft' && quarter.actual_value && (
-                            <div className="mt-2 text-sm">
-                              <span className="text-gray-500">Actual: </span>
-                              <span className="font-medium text-gray-900">
-                                {quarter.actual_value} {quarter.unit_of_measure}
-                              </span>
-                              <span className="ml-2 text-green-600">
-                                ({quarter.achievement_percentage}% achieved)
-                              </span>
-                            </div>
-                          )}
-                          
-                          {/* Staff Comment */}
-                          {quarter.staff_comment && (
-                            <div className="mt-2 text-xs text-gray-500 bg-gray-50 p-2 rounded">
-                              <span className="font-medium">Note:</span> {quarter.staff_comment}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* View Details Button */}
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      onClick={() => navigate(`/dashboard/initiatives/${task.id}`)}
-                      className="px-3 py-1.5 text-teal-600 hover:bg-teal-50 rounded-lg text-sm flex items-center gap-1 transition"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      View Full Details
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Task cards */}
+      <div className="space-y-3">
+        {filteredActivities.length === 0 ? (
+          <div className={`${card} ${cardPad} text-center`}>
+            <Search className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm text-gray-500">No tasks match your filters.</p>
+          </div>
+        ) : (
+          filteredActivities.map((activity) => (
+            <ActivityCard
+              key={activity.id}
+              activity={activity}
+              viewMode={viewMode}
+              isOpen={expandedActivityId === activity.id}
+              onToggleOpen={() =>
+                setExpandedActivityId(
+                  expandedActivityId === activity.id ? null : activity.id
+                )
+              }
+              editingQuarterKey={editingQuarterKey}
+              draftValue={draftValue}
+              savingQuarterId={savingQuarterId}
+              onStartEdit={handleStartEdit}
+              onCancelEdit={handleCancelEdit}
+              onDraftChange={setDraftValue}
+              onSave={handleSave}
+              locationForm={locationForm}
+              onLocationFieldChange={handleLocationFieldChange}
+              onSaveLocation={() => handleSaveLocation(activity.id)}
+              savingLocation={savingLocation}
+              images={activityImages[activity.id] || []}
+              onImagesChange={(imgs) =>
+                setActivityImages((prev) => ({ ...prev, [activity.id]: imgs }))
+              }
+              onViewDetails={() => navigate(`/dashboard/activities/${activity.id}`)}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 };

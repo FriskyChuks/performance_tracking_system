@@ -1,6 +1,6 @@
 // src/components/Landing/Hero.jsx
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, TrendingUp, Target, Award, ChevronLeft, ChevronRight, Play, Pause, BarChart3, Building2, Landmark } from 'lucide-react';
+import { ArrowRight, TrendingUp, Target, Award, ChevronLeft, ChevronRight, Play, Pause, BarChart3, Building2, Landmark, Droplets, Trees, Wind } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const backgroundImages = [
@@ -31,7 +31,7 @@ const backgroundImages = [
   }
 ];
 
-const Hero = ({ stats }) => {
+const Hero = ({ stats, user }) => {
   const [currentImage, setCurrentImage] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -81,17 +81,17 @@ const Hero = ({ stats }) => {
   const statCards = [
     {
       icon: TrendingUp,
-      value: stats?.completion_rate ? `${stats.completion_rate}%` : '95%',
+      value: stats?.completion_rate ? `${stats.completion_rate}%` : '78%',
       label: "Completion Rate",
       color: "from-green-400 to-emerald-500",
       description: "Target achievement"
     },
     {
       icon: Target,
-      value: stats?.total_initiatives?.toLocaleString() || '50+',
-      label: "Active Initiatives",
+      value: stats?.total_indicators?.toLocaleString() || '0',
+      label: "Active Indicators",
       color: "from-blue-400 to-indigo-500",
-      description: "Nationwide coverage"
+      description: "Nationwide tracking"
     },
     {
       icon: Award,
@@ -166,7 +166,7 @@ const Hero = ({ stats }) => {
       {isPlaying && (
         <div className="absolute bottom-0 left-0 right-0 z-30 h-1 bg-white/20">
           <div
-            className="h-full bg-gradient-to-r from-primary-500 to-secondary-500 transition-all duration-100 ease-linear"
+            className="h-full bg-gradient-to-r from-green-500 to-emerald-500 transition-all duration-100 ease-linear"
             style={{ width: `${progress}%` }}
           />
         </div>
@@ -188,10 +188,10 @@ const Hero = ({ stats }) => {
 
             <div className="animate-fade-in-up animation-delay-200">
               <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold text-white mb-4">
-                Performance Tracking
+                Environmental Performance
               </h1>
-              <h2 className="text-3xl sm:text-4xl md:text-6xl font-bold bg-gradient-to-r from-primary-400 via-secondary-400 to-accent-400 bg-clip-text text-transparent mb-6">
-                System
+              <h2 className="text-3xl sm:text-4xl md:text-6xl font-bold bg-gradient-to-r from-green-400 via-emerald-400 to-teal-400 bg-clip-text text-transparent mb-6">
+                Tracking System
               </h2>
               <p className="text-lg md:text-xl text-gray-200 mb-8 max-w-3xl mx-auto leading-relaxed">
                 Empowering environmental stewardship through real-time monitoring, 
@@ -202,20 +202,22 @@ const Hero = ({ stats }) => {
             <div className="flex flex-col sm:flex-row gap-4 justify-center animate-slide-up animation-delay-400">
               <Link
                 to="/public"
-                className="group relative px-8 py-3 bg-gradient-to-r from-primary-500 to-secondary-500 rounded-xl text-white font-semibold text-lg overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+                className="group relative px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl text-white font-semibold text-lg overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
               >
                 <span className="relative z-10 inline-flex items-center gap-2">
                   Citizen's Engagement Portal
                   <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 </span>
-                <div className="absolute inset-0 bg-gradient-to-r from-primary-600 to-secondary-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-green-600 to-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               </Link>
-              <Link
+              
+              {!user ? (
+                <Link
                 to="/login"
                 className="px-8 py-3 bg-white/10 backdrop-blur-md border border-white/30 rounded-xl text-white font-semibold text-lg hover:bg-white/20 transition-all duration-300 transform hover:scale-105"
               >
                 Staff Login
-              </Link>
+              </Link> ) : ""}
             </div>
             
             {/* Stats Cards with Real Data */}
@@ -253,8 +255,12 @@ const Hero = ({ stats }) => {
                 <span>{stats?.total_agencies || 0} Agencies</span>
               </div>
               <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4" />
-                <span>{stats?.total_deliverables || 0} Active Deliverables</span>
+                <Target className="w-4 h-4" />
+                <span>{stats?.total_indicators || 0} Active Indicators</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Droplets className="w-4 h-4" />
+                <span>Environmental Focus</span>
               </div>
             </div>
 

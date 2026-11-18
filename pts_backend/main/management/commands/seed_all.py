@@ -8,7 +8,7 @@ class Command(BaseCommand):
     def handle(self, *args, **kwargs):
         call_command("seed_departments")
         call_command("seed_agencies")
-        call_command("seed_priority_areas")
+        call_command("seed_federal_priority_areas")
         call_command("seed_deliverables")
 
         self.stdout.write(self.style.SUCCESS("✅ All data seeded"))

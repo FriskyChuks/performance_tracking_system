@@ -22,7 +22,7 @@ function AppContent() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
       </div>
     );
   }
@@ -47,7 +47,7 @@ function AppContent() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         
-        {/* Protected Dashboard Routes - Only for users with dashboard access */}
+        {/* Protected Dashboard Routes - All dashboard users */}
         <Route
           path="/dashboard/*"
           element={
@@ -57,12 +57,54 @@ function AppContent() {
           }
         />
         
-        {/* Admin-only routes can be added like this:
+        {/* Role-specific route examples (commented for reference) */}
+        {/* 
+        // Project Admin only routes
         <Route
-          path="/admin/*"
+          path="/dashboard/admin/*"
           element={
-            <PrivateRoute requireAdmin={true}>
-              <AdminPanel />
+            <PrivateRoute requiredRole="project_admin">
+              <UserManagement />
+            </PrivateRoute>
+          }
+        />
+        
+        // Delivery Officer only routes
+        <Route
+          path="/dashboard/my-tasks"
+          element={
+            <PrivateRoute requiredRole="delivery_officer">
+              <MyTasks />
+            </PrivateRoute>
+          }
+        />
+        
+        // Director only routes
+        <Route
+          path="/dashboard/pending-approvals"
+          element={
+            <PrivateRoute requiredRole="director">
+              <PendingApprovals />
+            </PrivateRoute>
+          }
+        />
+        
+        // Sector Expert only routes
+        <Route
+          path="/dashboard/pending-assessments"
+          element={
+            <PrivateRoute requiredRole="sector_expert">
+              <PendingAssessments />
+            </PrivateRoute>
+          }
+        />
+        
+        // Routes accessible by multiple roles
+        <Route
+          path="/dashboard/reports"
+          element={
+            <PrivateRoute allowedRoles={['project_admin', 'director', 'sector_expert']}>
+              <Reports />
             </PrivateRoute>
           }
         />

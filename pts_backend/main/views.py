@@ -1,970 +1,490 @@
 # main/views.py
-from django_filters import rest_framework
-from rest_framework import generics, status, filters
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework import generics, status, permissions
 from rest_framework.response import Response
-from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, Avg, Count, Sum
-from django.shortcuts import get_object_or_404
-import datetime
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.decorators import api_view, permission_classes
+from django.db.models import Q, Avg, Sum
 from django.utils import timezone
-
-from accounts.utils import get_user_role, get_user_permissions
-from accounts.serializers import UserSerializer
 from .models import *
 from .serializers import *
+from accounts.permissions import *
 
-# ==================== Public Endpoints ====================
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_departments(request):
-    """Public endpoint for departments"""
-    departments = Department.objects.all()
-    serializer = DepartmentSerializer(departments, many=True)
-    return Response(serializer.data)
+# ==================== Public Views (No Auth Required) ====================
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_agencies(request):
-    """Public endpoint for agencies"""
-    agencies = Agency.objects.all()
-    serializer = AgencySerializer(agencies, many=True)
-    return Response(serializer.data)
+class PublicFederalPriorityAreaList(generics.ListAPIView):
+    """Public list of Federal Priority Areas"""
+    queryset = FederalPriorityArea.objects.all()
+    serializer_class = FederalPriorityAreaSerializer
+    permission_classes = [permissions.AllowAny]
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_priority_areas(request):
-    """Public endpoint for priority areas"""
-    priority_areas = PriorityArea.objects.all()
-    serializer = PriorityAreaSerializer(priority_areas, many=True)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_deliverables(request):
-    """Public endpoint for deliverables"""
-    deliverables = Deliverable.objects.all().select_related('priority_area')
-    serializer = DeliverableSerializer(deliverables, many=True)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_dashboard_stats(request):
-    """Public dashboard statistics"""
-    total_initiatives = ProjectInitiative.objects.count()
-    total_departments = Department.objects.count()
-    total_agencies = Agency.objects.count()
-    total_priority_areas = PriorityArea.objects.count()
-    total_deliverables = Deliverable.objects.count()
-    
-    # Calculate average performance rating
-    avg_rating = ProjectInitiative.objects.exclude(
-        performance_rating__isnull=True
-    ).aggregate(avg=Avg('performance_rating'))['avg'] or 0
-    
-    # Calculate completion rate
-    completed = ProjectInitiative.objects.filter(status='completed').count()
-    completion_rate = (completed / total_initiatives * 100) if total_initiatives > 0 else 0
-    
-    # Get recent completed initiatives
-    recent_completed = ProjectInitiative.objects.filter(
-        status='completed'
-    ).order_by('-updated_at')[:5]
-    
-    recent_data = ProjectInitiativeListSerializer(recent_completed, many=True).data
-    
-    return Response({
-        'total_initiatives': total_initiatives,
-        'total_departments': total_departments,
-        'total_agencies': total_agencies,
-        'total_priority_areas': total_priority_areas,
-        'total_deliverables': total_deliverables,
-        'avg_performance_rating': round(avg_rating, 1),
-        'completion_rate': round(completion_rate, 1),
-        'recent_completed': recent_data,
-    })
-
-# ==================== Department Views ====================
-class DepartmentListCreateView(generics.ListCreateAPIView):
-    """
-    GET: List all departments (public)
-    POST: Create a new department (authenticated only)
-    """
+class PublicDepartmentList(generics.ListAPIView):
+    """Public list of Departments"""
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer
-    
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            # Allow anyone to view departments
-            return [AllowAny()]
-        # Require authentication for POST, PUT, DELETE
-        return [IsAuthenticated()]
+    permission_classes = [permissions.AllowAny]
 
-class DepartmentDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Department.objects.all()
-    serializer_class = DepartmentSerializer
-    
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [AllowAny()]
-        return [IsAuthenticated()]
-
-# ==================== Agency Views ====================
-
-class AgencyListCreateView(generics.ListCreateAPIView):
-    """
-    GET: List all agencies (public)
-    POST: Create a new agency (authenticated only)
-    """
+class PublicAgencyList(generics.ListAPIView):
+    """Public list of Agencies"""
     queryset = Agency.objects.all()
     serializer_class = AgencySerializer
-    
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            # Allow anyone to view agencies
-            return [AllowAny()]
-        # Require authentication for POST, PUT, DELETE
-        return [IsAuthenticated()]
+    permission_classes = [permissions.AllowAny]
 
-class AgencyDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Agency.objects.all()
-    serializer_class = AgencySerializer
-    
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [AllowAny()]
-        return [IsAuthenticated()]
-
-# ==================== Priority Area Views ====================
-
-class PriorityAreaListCreateView(generics.ListCreateAPIView):
-    queryset = PriorityArea.objects.all()
-    serializer_class = PriorityAreaSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name']
-    ordering_fields = ['order', 'name']
-
-class PriorityAreaDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = PriorityArea.objects.all()
-    serializer_class = PriorityAreaSerializer
-    permission_classes = [IsAuthenticated]
-
-# ==================== Deliverable Views ====================
-
-class DeliverableListCreateView(generics.ListCreateAPIView):
+class PublicDeliverableList(generics.ListAPIView):
+    """Public list of Deliverables"""
     queryset = Deliverable.objects.all()
     serializer_class = DeliverableSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['priority_area', 'is_achieved']
-    search_fields = ['name', 'description']
+    permission_classes = [permissions.AllowAny]
 
-class DeliverableDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Deliverable.objects.all()
-    serializer_class = DeliverableSerializer
-    permission_classes = [IsAuthenticated]
-
-# ==================== Project Initiative Views ====================
-
-class ProjectInitiativeListCreateView(generics.ListCreateAPIView):
-    serializer_class = ProjectInitiativeSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['initiative_type', 'status', 'department', 'agency', 'priority_area']
-    search_fields = ['title', 'description', 'code']
-    ordering_fields = ['start_date', 'end_date', 'created_at', 'progress_percentage']
+class PublicIndicatorList(generics.ListAPIView):
+    """Public list of indicators (no auth required)"""
+    queryset = Indicator.objects.all().select_related('deliverable')
+    serializer_class = IndicatorSerializer
+    permission_classes = [permissions.AllowAny]
     
     def get_queryset(self):
-        queryset = ProjectInitiative.objects.all().select_related(
-            'department', 'agency', 'priority_area'
-        ).prefetch_related('deliverables')
+        queryset = super().get_queryset()
         
-        # Filter by type
-        initiative_type = self.request.query_params.get('initiative_type')
-        if initiative_type:
-            queryset = queryset.filter(initiative_type=initiative_type)
+        deliverable_id = self.request.query_params.get('deliverable')
+        if deliverable_id:
+            queryset = queryset.filter(deliverable_id=deliverable_id)
         
-        # Filter by date range
-        start_date_from = self.request.query_params.get('start_date_from')
-        start_date_to = self.request.query_params.get('start_date_to')
-        if start_date_from:
-            queryset = queryset.filter(start_date__gte=start_date_from)
-        if start_date_to:
-            queryset = queryset.filter(start_date__lte=start_date_to)
+        priority_area_id = self.request.query_params.get('priority_area')
+        if priority_area_id:
+            queryset = queryset.filter(deliverable__federal_priority_area_id=priority_area_id)
         
-        # Search in title and description
-        search = self.request.query_params.get('search')
-        if search:
+        return queryset
+
+
+class PublicProjectActivityList(generics.ListAPIView):
+    """Public list of Project Activities - Show all activities (not just ongoing)"""
+    serializer_class = ProjectActivityListSerializer
+    permission_classes = [permissions.AllowAny]
+    
+    def get_queryset(self):
+        # Show all activities, not just ongoing
+        queryset = ProjectActivity.objects.all()
+        
+        # Filter by department
+        department = self.request.query_params.get('department')
+        if department:
+            queryset = queryset.filter(department_id=department)
+        
+        # Filter by agency
+        agency = self.request.query_params.get('agency')
+        if agency:
+            queryset = queryset.filter(agency_id=agency)
+        
+        # Filter by status
+        status = self.request.query_params.get('status')
+        if status:
+            queryset = queryset.filter(status=status)
+        
+        # Filter by priority area
+        priority_area = self.request.query_params.get('priority_area')
+        if priority_area:
             queryset = queryset.filter(
-                Q(title__icontains=search) |
-                Q(description__icontains=search) |
-                Q(code__icontains=search)
-            )
+                indicators__deliverable__federal_priority_area_id=priority_area
+            ).distinct()
+        
+        return queryset.order_by('-created_at')
+
+class PublicProjectActivityDetail(generics.RetrieveAPIView):
+    """Public detail of a Project Activity - FULL DATA including indicators"""
+    queryset = ProjectActivity.objects.all()
+    serializer_class = ProjectActivityDetailSerializer  # This now includes indicators
+    permission_classes = [permissions.AllowAny]
+    lookup_field = 'id'
+
+    
+
+
+# ==================== READ-ONLY Views for All Authenticated Users ====================
+
+class AllAuthenticatedActivityListView(generics.ListAPIView):
+    """All authenticated users can view activities (READ ONLY)"""
+    serializer_class = ProjectActivityListSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        
+        # Super Admin - see everything
+        if user.is_superuser or user.role == 'super_admin':
+            return ProjectActivity.objects.all()
+        
+        # Project Admin - see everything (they can also edit via other endpoints)
+        if user.role == 'project_admin':
+            return ProjectActivity.objects.all()
+        
+        # Delivery Officer - only their assigned department/agency
+        if user.role == 'delivery_officer':
+            if user.assigned_department:
+                return ProjectActivity.objects.filter(department=user.assigned_department)
+            if user.assigned_agency:
+                return ProjectActivity.objects.filter(agency=user.assigned_agency)
+        
+        # Director - see everything (or filter as needed)
+        if user.role == 'director':
+            return ProjectActivity.objects.all()
+        
+        # Sector Expert - see only completed/approved activities for assessment
+        if user.role == 'sector_expert':
+            return ProjectActivity.objects.filter(
+                quarterly_progress__status='approved',
+                quarterly_progress__expert_assessed=False
+            ).distinct()
+        
+        return ProjectActivity.objects.none()
+
+
+class AllAuthenticatedActivityDetailView(generics.RetrieveAPIView):
+    """All authenticated users can view activity details (READ ONLY)"""
+    serializer_class = ProjectActivityDetailSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_field = 'id'
+    
+    def get_queryset(self):
+        user = self.request.user
+        
+        if user.is_superuser or user.role == 'super_admin':
+            return ProjectActivity.objects.all()
+        
+        if user.role == 'project_admin':
+            return ProjectActivity.objects.all()
+        
+        if user.role == 'delivery_officer':
+            if user.assigned_department:
+                return ProjectActivity.objects.filter(department=user.assigned_department)
+            if user.assigned_agency:
+                return ProjectActivity.objects.filter(agency=user.assigned_agency)
+        
+        if user.role == 'director':
+            return ProjectActivity.objects.all()
+        
+        if user.role == 'sector_expert':
+            return ProjectActivity.objects.filter(
+                quarterly_progress__status='approved',
+                quarterly_progress__expert_assessed=False
+            ).distinct()
+        
+        return ProjectActivity.objects.none()
+
+
+# ==================== Indicator Management Views ====================
+
+class IndicatorListCreateView(generics.ListCreateAPIView):
+    """List all indicators or create a new indicator (Project Admin only)"""
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    
+    def get_queryset(self):
+        queryset = Indicator.objects.all().select_related('deliverable')
+        
+        deliverable_id = self.request.query_params.get('deliverable')
+        if deliverable_id:
+            queryset = queryset.filter(deliverable_id=deliverable_id)
         
         return queryset
     
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return IndicatorCreateUpdateSerializer
+        return IndicatorSerializer
+    
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
-
-class ProjectInitiativeDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = ProjectInitiative.objects.all()
-    serializer_class = ProjectInitiativeSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def perform_update(self, serializer):
-        serializer.save(updated_by=self.request.user)
-
-# ==================== Function-Based Views ====================
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def project_initiative_summary(request):
-    """Get summary statistics for project initiatives"""
-    queryset = ProjectInitiative.objects.all()
-    
-    # Apply filters
-    department_id = request.query_params.get('department')
-    if department_id:
-        queryset = queryset.filter(department_id=department_id)
-    
-    agency_id = request.query_params.get('agency')
-    if agency_id:
-        queryset = queryset.filter(agency_id=agency_id)
-    
-    initiative_type = request.query_params.get('initiative_type')
-    if initiative_type:
-        queryset = queryset.filter(initiative_type=initiative_type)
-    
-    total_initiatives = queryset.count()
-    total_projects = queryset.filter(initiative_type='project').count()
-    total_programs = queryset.filter(initiative_type='program').count()
-    
-    # Performance stats
-    avg_rating = queryset.exclude(performance_rating__isnull=True).aggregate(
-        avg=Avg('performance_rating')
-    )['avg']
-    
-    # Status distribution
-    status_distribution = queryset.values('status').annotate(count=Count('id'))
-    
-    # Budget stats (for projects only)
-    budget_stats = queryset.filter(initiative_type='project', budget__isnull=False).aggregate(
-        total_budget=Sum('budget'),
-        avg_budget=Avg('budget')
-    )
-    
-    return Response({
-        'total_initiatives': total_initiatives,
-        'total_projects': total_projects,
-        'total_programs': total_programs,
-        'average_performance_rating': avg_rating,
-        'status_distribution': status_distribution,
-        'budget_stats': budget_stats,
-    })
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def record_progress(request, initiative_id):
-    """Record progress for an initiative (creates history entry)"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    actual_value = request.data.get('actual_value')
-    notes = request.data.get('notes', '')
-    
-    if actual_value is None:
-        return Response({'error': 'actual_value is required'}, status=400)
-    
-    # Calculate progress percentage
-    if initiative.target_value and initiative.target_value > 0:
-        progress = (float(actual_value) / float(initiative.target_value)) * 100
-        progress = min(100, max(0, progress))
-    else:
-        progress = initiative.progress_percentage
-    
-    # Auto-calculate performance rating based on progress
-    if progress >= 90:
-        rating = 5
-    elif progress >= 75:
-        rating = 4
-    elif progress >= 50:
-        rating = 3
-    elif progress >= 25:
-        rating = 2
-    else:
-        rating = 1
-    
-    # Update initiative
-    initiative.actual_value = actual_value
-    initiative.progress_percentage = progress
-    initiative.performance_rating = rating
-    initiative.save()
-    
-    # Create history record
-    history = ProjectInitiativeHistory.objects.create(
-        initiative=initiative,
-        actual_value=actual_value,
-        progress_percentage=progress,
-        performance_rating=rating,
-        notes=notes,
-        recorded_by=request.user
-    )
-    
-    serializer = ProjectInitiativeHistorySerializer(history)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_initiatives(request):
-    """Public endpoint for viewing initiatives (no auth required)"""
-    queryset = ProjectInitiative.objects.filter().select_related(
-        'department', 'agency', 'priority_area'
-    )[:50]
-    
-    serializer = ProjectInitiativeListSerializer(queryset, many=True)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_initiative_detail(request, initiative_id):
-    """Public endpoint for initiative detail (no auth required)"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    serializer = ProjectInitiativeSerializer(initiative)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def dashboard_stats(request):
-    """Get dashboard statistics"""
-    total_departments = Department.objects.count()
-    total_agencies = Agency.objects.count()
-    total_priority_areas = PriorityArea.objects.count()
-    total_deliverables = Deliverable.objects.count()
-    total_initiatives = ProjectInitiative.objects.count()
-    
-    # Initiatives by type
-    initiatives_by_type = ProjectInitiative.objects.values('initiative_type').annotate(
-        count=Count('id')
-    )
-    
-    # Recent initiatives
-    recent_initiatives = ProjectInitiative.objects.all().order_by('-created_at')[:5]
-    recent_data = ProjectInitiativeListSerializer(recent_initiatives, many=True).data
-    
-    return Response({
-        'total_departments': total_departments,
-        'total_agencies': total_agencies,
-        'total_priority_areas': total_priority_areas,
-        'total_deliverables': total_deliverables,
-        'total_initiatives': total_initiatives,
-        'initiatives_by_type': initiatives_by_type,
-        'recent_initiatives': recent_data,
-    })
-
-
-# Additional views for user info and staff updates
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_user_info(request):
-    """Get current user's role and permissions"""
-    user = request.user
-    return Response({
-        'user': UserSerializer(user).data,
-        'role': get_user_role(user),
-        'permissions': get_user_permissions(user),
-    })
-
-class StaffInitiativeUpdateView(generics.UpdateAPIView):
-    """Special view for staff to update actual values"""
-    serializer_class = ProjectInitiativeSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        user = self.request.user
-        role = get_user_role(user)
-        
-        if role == 'staff':
-            # Staff can only see initiatives assigned to their department/agency
-            if user.assigned_department:
-                return ProjectInitiative.objects.filter(department=user.assigned_department)
-            elif user.assigned_agency:
-                return ProjectInitiative.objects.filter(agency=user.assigned_agency)
-        
-        return ProjectInitiative.objects.none()
-    
-    def perform_update(self, serializer):
-        user = self.request.user
-        role = get_user_role(user)
-        
-        if role != 'staff':
-            raise PermissionDenied("Only staff can update actual values")
-        
-        # Only allow updating specific fields
-        allowed_updates = {
-            'actual_value': serializer.validated_data.get('actual_value'),
-            'status': serializer.validated_data.get('status'),
-        }
-        
-        # Remove None values
-        allowed_updates = {k: v for k, v in allowed_updates.items() if v is not None}
-        
-        for key, value in allowed_updates.items():
-            setattr(serializer.instance, key, value)
-        
-        serializer.instance.save()
-        serializer.instance.update_achievement_percentage()
-
-class DirectorApprovalView(generics.UpdateAPIView):
-    """View for directors to approve initiatives"""
-    serializer_class = ProjectInitiativeSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        return ProjectInitiative.objects.filter(status='submitted')
-    
-    def perform_update(self, serializer):
-        user = self.request.user
-        role = get_user_role(user)
-        
-        if role != 'director':
-            raise PermissionDenied("Only directors can approve initiatives")
-        
-        action = self.request.data.get('action')
-        
-        if action == 'approve':
-            serializer.save(status='approved', approved_by=user, approved_at=timezone.now())
-        elif action == 'reject':
-            serializer.save(status='rejected')
-        else:
-            raise ValidationError("Action must be 'approve' or 'reject'")
-        
-
-# ==================== Quarterly Progress Views ====================
-
-class InitiativeQuarterListView(generics.ListAPIView):
-    """Get all quarters for an initiative"""
-    serializer_class = DeliverableQuarterSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        initiative_id = self.kwargs.get('initiative_id')
-        year = self.request.query_params.get('year')
-        
-        queryset = DeliverableQuarter.objects.filter(initiative_id=initiative_id)
-        
-        if year:
-            queryset = queryset.filter(year=year)
-        
-        return queryset.order_by('year', 'quarter', 'deliverable__name')
-
-class InitiativeQuarterDetailView(generics.RetrieveAPIView):
-    """Get specific quarter details"""
-    serializer_class = DeliverableQuarterSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_object(self):
-        initiative_id = self.kwargs.get('initiative_id')
-        year = self.kwargs.get('year')
-        quarter = self.kwargs.get('quarter')
-        
-        return get_object_or_404(
-            DeliverableQuarter, 
-            initiative_id=initiative_id, 
-            year=year, 
-            quarter=quarter
-        )
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def initialize_quarterly_targets(request, initiative_id):
-    """Initialize quarterly targets for deliverables"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    # Check permission - only ProjectAdmin or Staff can initialize
-    user_role = get_user_role(request.user)
-    if user_role not in ['project_admin', 'staff', 'super_admin']:
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    deliverable_id = request.data.get('deliverable_id')
-    target_value = request.data.get('target_value')
-    unit_of_measure = request.data.get('unit_of_measure')
-    year = request.data.get('year', timezone.now().year)
-    
-    if not deliverable_id or not target_value:
-        return Response({'error': 'deliverable_id and target_value are required'}, status=400)
-    
-    # Create quarterly records for Q1, Q2, Q3, Q4
-    quarters_created = []
-    for quarter in range(1, 5):
-        quarter_obj, created = DeliverableQuarter.objects.get_or_create(
-            initiative=initiative,
-            deliverable_id=deliverable_id,
-            quarter=quarter,
-            year=year,
-            defaults={
-                'target_value': target_value,
-                'unit_of_measure': unit_of_measure,
-                'status': 'draft'
-            }
-        )
-        quarters_created.append(quarter_obj)
-    
-    serializer = DeliverableQuarterSerializer(quarters_created, many=True)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-@api_view(['PATCH'])
-@permission_classes([IsAuthenticated])
-def update_quarter_actual(request, quarter_id):
-    """Staff updates actual value for a quarter"""
-    quarter = get_object_or_404(DeliverableQuarter, id=quarter_id)
-    
-    # Check permission - only Staff can update actual values
-    user_role = get_user_role(request.user)
-    if user_role not in ['staff', 'super_admin']:
-        return Response({'error': 'Only staff can update actual values'}, status=403)
-    
-    # Check if quarter is still in draft status
-    if quarter.status != 'draft':
-        return Response({'error': f'Cannot update quarter in {quarter.status} status'}, status=400)
-    
-    actual_value = request.data.get('actual_value')
-    staff_comment = request.data.get('staff_comment', '')
-    
-    if actual_value is None:
-        return Response({'error': 'actual_value is required'}, status=400)
-    
-    quarter.actual_value = actual_value
-    if staff_comment:
-        quarter.staff_comment = staff_comment
-    quarter.updated_by = request.user
-    quarter.save()
-    
-    serializer = DeliverableQuarterSerializer(quarter)
-    return Response(serializer.data)
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def submit_quarter_for_review(request, quarter_id):
-    """Staff submits quarter for director review"""
-    quarter = get_object_or_404(DeliverableQuarter, id=quarter_id)
-    
-    # Check permission - only Staff can submit
-    user_role = get_user_role(request.user)
-    if user_role not in ['staff', 'super_admin']:
-        return Response({'error': 'Only staff can submit for review'}, status=403)
-    
-    if quarter.status != 'draft':
-        return Response({'error': f'Cannot submit quarter in {quarter.status} status'}, status=400)
-    
-    if quarter.actual_value is None:
-        return Response({'error': 'Please update actual value before submitting'}, status=400)
-    
-    quarter.status = 'submitted'
-    quarter.submitted_at = timezone.now()
-    quarter.save()
-    
-    serializer = DeliverableQuarterSerializer(quarter)
-    return Response(serializer.data)
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def create_quarter(request, initiative_id):
-    """Create a new quarterly record for a deliverable"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    # Check permission
-    user_role = get_user_role(request.user)
-    if user_role not in ['project_admin', 'staff', 'super_admin']:
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    deliverable_id = request.data.get('deliverable_id')
-    quarter = request.data.get('quarter')
-    year = request.data.get('year')
-    target_value = request.data.get('target_value')
-    unit_of_measure = request.data.get('unit_of_measure')
-    
-    if not all([deliverable_id, quarter, year, target_value]):
-        return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Check if quarter already exists
-    existing, created = DeliverableQuarter.objects.get_or_create(
-        initiative=initiative,
-        deliverable_id=deliverable_id,
-        quarter=quarter,
-        year=year,
-        defaults={
-            'target_value': target_value,
-            'unit_of_measure': unit_of_measure,
-            'status': 'draft'
-        }
-    )
-    
-    if not created:
-        # Update existing
-        existing.target_value = target_value
-        existing.unit_of_measure = unit_of_measure
-        existing.save()
-        serializer = DeliverableQuarterSerializer(existing)
-    else:
-        serializer = DeliverableQuarterSerializer(existing)
-    
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def upsert_quarter(request, initiative_id):
-    """Create or update a quarterly record (upsert)"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    # Check permission
-    user_role = get_user_role(request.user)
-    if user_role not in ['project_admin', 'staff', 'super_admin']:
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    deliverable_id = request.data.get('deliverable_id')
-    quarter = request.data.get('quarter')
-    year = request.data.get('year')
-    target_value = request.data.get('target_value')
-    unit_of_measure = request.data.get('unit_of_measure')
-    
-    if not all([deliverable_id, quarter, year, target_value]):
-        return Response({'error': 'Missing required fields: deliverable_id, quarter, year, target_value'}, 
-                       status=status.HTTP_400_BAD_REQUEST)
-    
-    # Upsert: update or create
-    quarter_obj, created = DeliverableQuarter.objects.update_or_create(
-        initiative=initiative,
-        deliverable_id=deliverable_id,
-        quarter=quarter,
-        year=year,
-        defaults={
-            'target_value': target_value,
-            'unit_of_measure': unit_of_measure,
-            'status': 'draft'
-        }
-    )
-    
-    serializer = DeliverableQuarterSerializer(quarter_obj)
-    return Response(serializer.data, status=status.HTTP_200_OK)
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def approve_quarter(request, quarter_id):
-    """Director approves a quarter"""
-    quarter = get_object_or_404(DeliverableQuarter, id=quarter_id)
-    
-    # Check permission - only Director can approve
-    user_role = get_user_role(request.user)
-    if user_role not in ['director', 'super_admin']:
-        return Response({'error': 'Only directors can approve'}, status=403)
-    
-    if quarter.status != 'submitted':
-        return Response({'error': f'Cannot approve quarter in {quarter.status} status'}, status=400)
-    
-    quarter.status = 'approved'
-    quarter.approved_at = timezone.now()
-    quarter.approved_by = request.user
-    quarter.save()
-    
-    # Check if all quarters for this initiative/year are approved
-    # If yes, update initiative status
-    all_quarters = DeliverableQuarter.objects.filter(
-        initiative=quarter.initiative,
-        year=quarter.year
-    )
-    all_approved = all(q.status == 'approved' for q in all_quarters)
-    
-    if all_approved:
-        # Update initiative status to completed for this year
-        initiative = quarter.initiative
-        if initiative.status == 'ongoing':
-            initiative.status = 'completed'
-            initiative.save()
-    
-    serializer = DeliverableQuarterSerializer(quarter)
-    return Response(serializer.data)
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def reject_quarter(request, quarter_id):
-    """Director rejects a quarter"""
-    quarter = get_object_or_404(DeliverableQuarter, id=quarter_id)
-    
-    # Check permission - only Director can reject
-    user_role = get_user_role(request.user)
-    if user_role not in ['director', 'super_admin']:
-        return Response({'error': 'Only directors can reject'}, status=403)
-    
-    if quarter.status != 'submitted':
-        return Response({'error': f'Cannot reject quarter in {quarter.status} status'}, status=400)
-    
-    reason = request.data.get('reason', '')
-    quarter.status = 'rejected'
-    quarter.staff_comment = f"Rejected: {reason}" if reason else quarter.staff_comment
-    quarter.save()
-    
-    serializer = DeliverableQuarterSerializer(quarter)
-    return Response(serializer.data)
-
-
-# ==================== Expert Assessment Views ====================
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_initiative_assessment(request, initiative_id):
-    """Get assessment for an initiative"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    try:
-        assessment = InitiativeAssessment.objects.get(initiative=initiative)
-        serializer = InitiativeAssessmentSerializer(assessment)
-        return Response(serializer.data)
-    except InitiativeAssessment.DoesNotExist:
-        return Response(None, status=status.HTTP_200_OK)
-
-@api_view(['POST', 'PUT'])
-@permission_classes([IsAuthenticated])
-def save_initiative_assessment(request, initiative_id):
-    """Create or update assessment for an initiative"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    # Check permission - only Sector Expert can assess
-    user_role = get_user_role(request.user)
-    if user_role not in ['sector_expert', 'super_admin']:
-        return Response({'error': 'Only sector experts can assess'}, status=403)
-    
-    # Check if initiative has approved deliverables or is completed
-    has_approved_quarters = DeliverableQuarter.objects.filter(
-        initiative=initiative,
-        status='approved'
-    ).exists()
-    
-    if not has_approved_quarters and initiative.status != 'completed':
-        return Response({'error': 'Initiative must have approved deliverables or be completed before assessment'}, status=400)
-    
-    data = {
-        'initiative': initiative.id,
-        'data_accuracy': request.data.get('data_accuracy'),
-        'effort_percentage': request.data.get('effort_percentage'),
-        'expert_comment': request.data.get('expert_comment'),
-        'expert_rating': request.data.get('expert_rating'),
-        'recommendations': request.data.get('recommendations', ''),
-        'assessed_by': request.user.id
-    }
-    
-    try:
-        assessment = InitiativeAssessment.objects.get(initiative=initiative)
-        serializer = InitiativeAssessmentSerializer(assessment, data=data, partial=True)
-    except InitiativeAssessment.DoesNotExist:
-        serializer = InitiativeAssessmentSerializer(data=data)
-    
-    if serializer.is_valid():
         serializer.save()
-        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class IndicatorDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Retrieve, update or delete an indicator (Project Admin only)"""
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = Indicator.objects.all()
     
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def get_serializer_class(self):
+        if self.request.method in ['PUT', 'PATCH']:
+            return IndicatorCreateUpdateSerializer
+        return IndicatorSerializer
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_initiative_for_expert_assessment(request, initiative_id):
-    """Get complete initiative data with all approved deliverables for expert assessment"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    # Get all approved quarters for this initiative
-    approved_quarters = DeliverableQuarter.objects.filter(
-        initiative=initiative,
-        status='approved'
-    ).select_related('deliverable')
-    
-    # Get existing assessment if any
-    try:
-        assessment = InitiativeAssessment.objects.get(initiative=initiative)
-        assessment_data = InitiativeAssessmentSerializer(assessment).data
-    except InitiativeAssessment.DoesNotExist:
-        assessment_data = None
-    
-    # Structure approved deliverables
-    approved_deliverables = []
-    for quarter in approved_quarters:
-        approved_deliverables.append({
-            'id': quarter.deliverable.id,
-            'name': quarter.deliverable.name,
-            'quarter': quarter.quarter,
-            'year': quarter.year,
-            'target_value': quarter.target_value,
-            'actual_value': quarter.actual_value,
-            'unit_of_measure': quarter.unit_of_measure,
-            'achievement_percentage': quarter.achievement_percentage,
-            'quarter_id': quarter.id
-        })
-    
-    return Response({
-        'initiative': ProjectInitiativeSerializer(initiative).data,
-        'approved_deliverables': approved_deliverables,
-        'existing_assessment': assessment_data
-    })
+# ==================== Department CRUD (Project Admin) ====================
+
+class DepartmentListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = Department.objects.all().order_by('name')
+
+    def get_serializer_class(self):
+        return DepartmentSerializer
+
+class DepartmentDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = Department.objects.all()
+    serializer_class = DepartmentSerializer
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def expert_dashboard(request):
-    """Get dashboard for sector expert users - shows deliverables pending expert review"""
-    user_role = get_user_role(request.user)
-    if user_role not in ['sector_expert', 'super_admin']:
-        return Response({'error': 'Access denied'}, status=403)
+# ==================== Agency CRUD (Project Admin) ====================
+
+class AgencyListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = Agency.objects.all().order_by('name')
+    serializer_class = AgencySerializer
+
+class AgencyDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = Agency.objects.all()
+    serializer_class = AgencySerializer
+
+
+# ==================== Federal Priority Area CRUD (Project Admin) ====================
+
+class FederalPriorityAreaListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = FederalPriorityArea.objects.all().order_by('order', 'name')
+    serializer_class = FederalPriorityAreaSerializer
+
+class FederalPriorityAreaDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = FederalPriorityArea.objects.all()
+    serializer_class = FederalPriorityAreaSerializer
+
+
+# ==================== Deliverable CRUD (Project Admin) ====================
+
+class DeliverableListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = Deliverable.objects.all().select_related('federal_priority_area').order_by('name')
+    serializer_class = DeliverableSerializer
+
+class DeliverableDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    queryset = Deliverable.objects.all()
+    serializer_class = DeliverableSerializer
+
+
+# ==================== Project Admin Views (Full CRUD) ====================
+
+class ProjectActivityListCreateView(generics.ListCreateAPIView):
+    """Project Admin: List all activities and create new ones"""
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
     
-    # Get all approved quarters that haven't been assessed yet
-    # Group by initiative
-    approved_quarters = DeliverableQuarter.objects.filter(
-        status='approved'
-    ).select_related('initiative', 'deliverable', 'initiative__department', 'initiative__agency')
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return ProjectActivity.objects.all()
+        if user.assigned_department:
+            return ProjectActivity.objects.filter(department=user.assigned_department)
+        if user.assigned_agency:
+            return ProjectActivity.objects.filter(agency=user.assigned_agency)
+        return ProjectActivity.objects.none()
     
-    # Process initiatives with approved quarters
-    initiative_dict = {}
-    for quarter in approved_quarters:
-        initiative_id = quarter.initiative.id
-        if initiative_id not in initiative_dict:
-            # Check if this initiative already has an assessment
-            has_assessment = InitiativeAssessment.objects.filter(initiative_id=initiative_id).exists()
-            if not has_assessment:
-                initiative_dict[initiative_id] = {
-                    'id': initiative_id,
-                    'title': quarter.initiative.title,
-                    'description': quarter.initiative.description,
-                    'code': quarter.initiative.code,
-                    'initiative_type': quarter.initiative.initiative_type,
-                    'department_name': quarter.initiative.department.name if quarter.initiative.department else None,
-                    'agency_name': quarter.initiative.agency.name if quarter.initiative.agency else None,
-                    'priority_area_name': quarter.initiative.priority_area.name if quarter.initiative.priority_area else None,
-                    'status': quarter.initiative.status,
-                    'start_date': quarter.initiative.start_date,
-                    'end_date': quarter.initiative.end_date,
-                    'approved_deliverables': []
-                }
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ProjectActivityCreateUpdateSerializer
+        return ProjectActivityListSerializer
+
+class ProjectActivityDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Project Admin: View, update, delete activity"""
+    permission_classes = [permissions.IsAuthenticated, IsProjectAdmin]
+    serializer_class = ProjectActivityCreateUpdateSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return ProjectActivity.objects.all()
+        if user.assigned_department:
+            return ProjectActivity.objects.filter(department=user.assigned_department)
+        if user.assigned_agency:
+            return ProjectActivity.objects.filter(agency=user.assigned_agency)
+        return ProjectActivity.objects.none()
+
+
+# ==================== Delivery Officer Views ====================
+
+class DeliveryOfficerActivityListView(generics.ListAPIView):
+    """Delivery Officer: List activities assigned to their department/agency only"""
+    serializer_class = ProjectActivityListSerializer
+    permission_classes = [permissions.IsAuthenticated, IsDeliveryOfficer]
+    
+    def get_queryset(self):
+        user = self.request.user
+        queryset = ProjectActivity.objects.prefetch_related('indicators')
         
-        if initiative_id in initiative_dict:
-            initiative_dict[initiative_id]['approved_deliverables'].append({
-                'id': quarter.deliverable.id,
-                'name': quarter.deliverable.name,
-                'quarter': quarter.quarter,
-                'year': quarter.year,
-                'target_value': quarter.target_value,
-                'actual_value': quarter.actual_value,
-                'unit_of_measure': quarter.unit_of_measure,
-                'achievement_percentage': quarter.achievement_percentage,
-                'quarter_id': quarter.id
-            })
-    
-    # Also include completed initiatives without any approved deliverables
-    completed_initiatives = ProjectInitiative.objects.filter(
-        status='completed'
-    ).exclude(
-        id__in=InitiativeAssessment.objects.values('initiative_id')
-    )
-    
-    for initiative in completed_initiatives:
-        if initiative.id not in initiative_dict:
-            initiative_dict[initiative.id] = {
-                'id': initiative.id,
-                'title': initiative.title,
-                'description': initiative.description,
-                'code': initiative.code,
-                'initiative_type': initiative.initiative_type,
-                'department_name': initiative.department.name if initiative.department else None,
-                'agency_name': initiative.agency.name if initiative.agency else None,
-                'priority_area_name': initiative.priority_area.name if initiative.priority_area else None,
-                'status': initiative.status,
-                'start_date': initiative.start_date,
-                'end_date': initiative.end_date,
-                'approved_deliverables': []
-            }
-    
-    return Response(list(initiative_dict.values()))
+        if user.assigned_department:
+            return queryset.filter(department=user.assigned_department)
+        if user.assigned_agency:
+            return queryset.filter(agency=user.assigned_agency)
+        return ProjectActivity.objects.none()
 
 
-# ==================== Staff/Director Dashboard Views ====================
+class DeliveryOfficerActivityDetailView(generics.RetrieveAPIView):
+    """Delivery Officer: View specific activity detail (READ ONLY)"""
+    permission_classes = [permissions.IsAuthenticated, IsDeliveryOfficer]
+    serializer_class = ProjectActivityDetailSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.assigned_department:
+            return ProjectActivity.objects.filter(department=user.assigned_department)
+        if user.assigned_agency:
+            return ProjectActivity.objects.filter(agency=user.assigned_agency)
+        return ProjectActivity.objects.none()
+
+
+class DeliveryOfficerActivityUpdateView(generics.UpdateAPIView):
+    """Delivery Officer: Update activity location and other non-critical fields"""
+    permission_classes = [permissions.IsAuthenticated, IsDeliveryOfficer]
+    serializer_class = DeliveryOfficerActivityUpdateSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.assigned_department:
+            return ProjectActivity.objects.filter(department=user.assigned_department)
+        if user.assigned_agency:
+            return ProjectActivity.objects.filter(agency=user.assigned_agency)
+        return ProjectActivity.objects.none()
+
+
+class DeliveryOfficerProgressList(generics.ListAPIView):
+    """Delivery Officer: List quarterly progress for their activities"""
+    serializer_class = IndicatorQuarterlyProgressSerializer
+    permission_classes = [permissions.IsAuthenticated, IsDeliveryOfficer]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.assigned_department:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__department=user.assigned_department
+            )
+        if user.assigned_agency:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__agency=user.assigned_agency
+            )
+        return IndicatorQuarterlyProgress.objects.none()
+
+
+class DeliveryOfficerProgressUpdateView(generics.UpdateAPIView):
+    """Delivery Officer: Update progress (actual values, images, comments)"""
+    serializer_class = DeliveryOfficerProgressSerializer
+    permission_classes = [permissions.IsAuthenticated, IsDeliveryOfficer]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.assigned_department:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__department=user.assigned_department,
+                status__in=['draft', 'rejected']
+            )
+        if user.assigned_agency:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__agency=user.assigned_agency,
+                status__in=['draft', 'rejected']
+            )
+        return IndicatorQuarterlyProgress.objects.none()
+
+# ==================== Director Views ====================
+
+class DirectorPendingApprovalsView(generics.ListAPIView):
+    """Director: List pending approvals"""
+    serializer_class = IndicatorQuarterlyProgressSerializer
+    permission_classes = [permissions.IsAuthenticated, IsDirector]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.assigned_department:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__department=user.assigned_department,
+                status='submitted'
+            )
+        if user.assigned_agency:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__agency=user.assigned_agency,
+                status='submitted'
+            )
+        return IndicatorQuarterlyProgress.objects.none()
+
+
+class DirectorApproveView(generics.UpdateAPIView):
+    serializer_class = DirectorApprovalSerializer
+    permission_classes = [permissions.IsAuthenticated, IsDirector]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.assigned_department:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__department=user.assigned_department,
+                status='submitted',
+            )
+        if user.assigned_agency:
+            return IndicatorQuarterlyProgress.objects.filter(
+                activity__agency=user.assigned_agency,
+                status='submitted',
+            )
+        return IndicatorQuarterlyProgress.objects.none()
+
+    # No perform_update override needed — the serializer handles status rewrite
+    # and populating rejected_by/rejected_at.
+
+# ==================== Sector Expert Views ====================
+
+class ExpertPendingAssessmentsView(generics.ListAPIView):
+    """Sector Expert: List pending expert assessments"""
+    serializer_class = IndicatorQuarterlyProgressSerializer
+    permission_classes = [permissions.IsAuthenticated, IsSectorExpert]
+    
+    def get_queryset(self):
+        return IndicatorQuarterlyProgress.objects.filter(
+            status='approved',
+            expert_assessed=False
+        )
+
+class ExpertAssessView(generics.UpdateAPIView):
+    """Sector Expert: Perform assessment"""
+    serializer_class = ExpertAssessmentSerializer
+    permission_classes = [permissions.IsAuthenticated, IsSectorExpert]
+    
+    def get_queryset(self):
+        return IndicatorQuarterlyProgress.objects.filter(
+            status='approved',
+            expert_assessed=False
+        )
+
+
+# ==================== Dashboard Stats View ====================
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def staff_dashboard(request):
-    """Get dashboard for staff users"""
-    user_role = get_user_role(request.user)
-    if user_role not in ['staff', 'super_admin']:
-        return Response({'error': 'Access denied'}, status=403)
+@permission_classes([permissions.IsAuthenticated])
+def dashboard_stats(request):
+    """Get dashboard statistics based on user role"""
+    user = request.user
+    stats = {}
     
-    # Get quarters assigned to staff's department/agency
-    quarters = DeliverableQuarter.objects.filter(
-        initiative__department=request.user.assigned_department,
-        status='draft'
-    ).select_related('initiative', 'deliverable')
+    if user.role == 'project_admin' or user.is_superuser:
+        activities = ProjectActivity.objects.filter(
+            Q(department=user.assigned_department) | Q(agency=user.assigned_agency)
+        ) if user.assigned_department or user.assigned_agency else ProjectActivity.objects.all()
+        stats['total_activities'] = activities.count()
+        stats['ongoing_activities'] = activities.filter(status='ongoing').count()
+        stats['completed_activities'] = activities.filter(status='completed').count()
+        
+    elif user.role == 'delivery_officer':
+        progresses = IndicatorQuarterlyProgress.objects.filter(
+            Q(activity__department=user.assigned_department) | 
+            Q(activity__agency=user.assigned_agency)
+        )
+        stats['pending_updates'] = progresses.filter(status='draft').count()
+        stats['submitted'] = progresses.filter(status='submitted').count()
+        stats['approved'] = progresses.filter(status='approved').count()
+        
+    elif user.role == 'director':
+        stats['pending_approvals'] = IndicatorQuarterlyProgress.objects.filter(
+            Q(activity__department=user.assigned_department) | 
+            Q(activity__agency=user.assigned_agency),
+            status='submitted'
+        ).count()
+        
+    elif user.role == 'sector_expert':
+        stats['pending_assessments'] = IndicatorQuarterlyProgress.objects.filter(
+            status='approved',
+            expert_assessed=False
+        ).count()
+        stats['completed_assessments'] = IndicatorQuarterlyProgress.objects.filter(
+            expert_assessed=True
+        ).count()
     
-    serializer = DeliverableQuarterSerializer(quarters, many=True)
-    return Response(serializer.data)
-
-
-# Updated the director_dashboard view to include all necessary fields for the frontend
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def director_dashboard(request):
-    """Get dashboard for director users"""
-    user_role = get_user_role(request.user)
-    if user_role not in ['director', 'super_admin']:
-        return Response({'error': 'Access denied'}, status=403)
-    
-    # Get quarters pending approval with all necessary fields
-    quarters = DeliverableQuarter.objects.filter(
-        status='submitted'
-    ).select_related('initiative', 'deliverable', 'initiative__department', 'initiative__agency')
-    
-    # Serialize with all required fields
-    data = []
-    for q in quarters:
-        data.append({
-            'id': q.id,
-            'initiative_id': q.initiative.id,
-            'initiative_title': q.initiative.title,
-            'initiative_code': q.initiative.code,
-            'deliverable_id': q.deliverable.id,
-            'deliverable_name': q.deliverable.name,
-            'quarter': q.quarter,
-            'year': q.year,
-            'target_value': q.target_value,
-            'actual_value': q.actual_value,
-            'unit_of_measure': q.unit_of_measure,
-            'achievement_percentage': q.achievement_percentage,
-            'staff_comment': q.staff_comment,
-            'status': q.status,
-            'submitted_at': q.submitted_at,
-        })
-    
-    return Response(data)
-
-
-# ==================== Quarterly Summary Views ====================
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_initiative_summaries(request, initiative_id):
-    """Get quarterly summaries for an initiative"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    summaries = InitiativeQuarterSummary.objects.filter(initiative=initiative)
-    serializer = InitiativeQuarterSummarySerializer(summaries, many=True)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_initiative_summary_by_year(request, initiative_id, year):
-    """Get summary for a specific year"""
-    initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-    
-    try:
-        summary = InitiativeQuarterSummary.objects.get(initiative=initiative, year=year)
-        serializer = InitiativeQuarterSummarySerializer(summary)
-        return Response(serializer.data)
-    except InitiativeQuarterSummary.DoesNotExist:
-        return Response(None, status=status.HTTP_200_OK)
+    return Response(stats)

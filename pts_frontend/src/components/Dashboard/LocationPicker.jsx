@@ -3,7 +3,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MapPin, Search, Crosshair, AlertCircle, Globe, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddressChange }) => {
+// Round coordinates to fit backend DecimalField(max_digits=10, decimal_places=7)
+// This caps to 7 decimal places and trims to at most 3 integer digits safely.
+const roundCoord = (val) => {
+  const n = parseFloat(val);
+  return isNaN(n) ? null : Number(n.toFixed(7));
+};
+
+const LocationPicker = ({ 
+  latitude, 
+  longitude, 
+  address, 
+  onLocationChange, 
+  onAddressChange,
+  disabled = false,
+  showHelp = true 
+}) => {
   const [useMap, setUseMap] = useState(true);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState(null);
@@ -25,9 +40,23 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
   const hasApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY && 
                     import.meta.env.VITE_GOOGLE_MAPS_API_KEY !== 'your_google_maps_api_key_here';
 
+  // Sync with props when they change
+  useEffect(() => {
+    if (latitude !== undefined && latitude !== lat) {
+      setLat(latitude);
+    }
+    if (longitude !== undefined && longitude !== lng) {
+      setLng(longitude);
+    }
+    if (address !== undefined && address !== addr) {
+      setAddr(address);
+      setSearchInput(address);
+    }
+  }, [latitude, longitude, address]);
+
   // Load Google Maps script
   useEffect(() => {
-    if (!useMap || !hasApiKey) return;
+    if (!useMap || !hasApiKey || disabled) return;
     
     const loadGoogleMaps = () => {
       if (window.google && window.google.maps) {
@@ -45,12 +74,15 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
     };
     
     loadGoogleMaps();
-  }, [useMap]);
+  }, [useMap, disabled]);
 
   const initMap = () => {
     if (!window.google || !window.google.maps) return;
     
-    const center = { lat: parseFloat(latitude) || 9.0765, lng: parseFloat(longitude) || 7.3986 };
+    const center = { 
+      lat: parseFloat(latitude) || 9.0765, 
+      lng: parseFloat(longitude) || 7.3986 
+    };
     
     const map = new window.google.maps.Map(document.getElementById('location-map'), {
       center,
@@ -65,30 +97,31 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
     const marker = new window.google.maps.Marker({
       map,
       position: center,
-      draggable: true,
+      draggable: !disabled,
       animation: window.google.maps.Animation.DROP,
     });
     
     mapRef.current = map;
     markerRef.current = marker;
     
-    // Click on map
-    map.addListener('click', (e) => {
-      const lat = e.latLng.lat();
-      const lng = e.latLng.lng();
-      updateLocationFromMap(lat, lng);
-    });
-    
-    // Drag marker
-    marker.addListener('dragend', (e) => {
-      const lat = e.latLng.lat();
-      const lng = e.latLng.lng();
-      updateLocationFromMap(lat, lng);
-    });
+    // Only add click listeners if not disabled
+    if (!disabled) {
+      map.addListener('click', (e) => {
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        updateLocationFromMap(lat, lng);
+      });
+      
+      marker.addListener('dragend', (e) => {
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        updateLocationFromMap(lat, lng);
+      });
+    }
     
     // Search box
     const searchInputElement = document.getElementById('location-search-input');
-    if (searchInputElement) {
+    if (searchInputElement && !disabled) {
       const searchBox = new window.google.maps.places.SearchBox(searchInputElement);
       searchBoxRef.current = searchBox;
       
@@ -112,22 +145,27 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
   };
 
   const updateLocationFromMap = async (lat, lng, customAddress = null) => {
+    if (disabled) return;
+
+    const roundedLat = roundCoord(lat);
+    const roundedLng = roundCoord(lng);
+
     if (markerRef.current) {
-      markerRef.current.setPosition({ lat, lng });
+      markerRef.current.setPosition({ lat: roundedLat, lng: roundedLng });
     }
     if (mapRef.current) {
-      mapRef.current.setCenter({ lat, lng });
+      mapRef.current.setCenter({ lat: roundedLat, lng: roundedLng });
     }
     
     // Update manual fields
-    setLat(lat.toFixed(6));
-    setLng(lng.toFixed(6));
-    onLocationChange(lat, lng);
+    setLat(roundedLat.toFixed(7));
+    setLng(roundedLng.toFixed(7));
+    onLocationChange(roundedLat, roundedLng);
     
     if (!customAddress && window.google) {
       try {
         const geocoder = new window.google.maps.Geocoder();
-        geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        geocoder.geocode({ location: { lat: roundedLat, lng: roundedLng } }, (results, status) => {
           if (status === 'OK' && results[0]) {
             const address = results[0].formatted_address;
             setAddr(address);
@@ -145,6 +183,11 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
   };
 
   const getCurrentLocation = () => {
+    if (disabled) {
+      toast.error('Location selection is disabled');
+      return;
+    }
+    
     setGettingLocation(true);
     
     if (!navigator.geolocation) {
@@ -160,9 +203,11 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
         if (useMap && mapRef.current) {
           updateLocationFromMap(latitude, longitude);
         } else {
-          setLat(latitude.toFixed(6));
-          setLng(longitude.toFixed(6));
-          onLocationChange(latitude, longitude);
+          const roundedLat = roundCoord(latitude);
+          const roundedLng = roundCoord(longitude);
+          setLat(roundedLat.toFixed(7));
+          setLng(roundedLng.toFixed(7));
+          onLocationChange(roundedLat, roundedLng);
         }
         
         toast.success('Location updated to your current position');
@@ -192,6 +237,8 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
 
   // Manual entry validation
   const validateAndUpdateManual = (newLat, newLng) => {
+    if (disabled) return;
+    
     const latNum = parseFloat(newLat);
     const lngNum = parseFloat(newLng);
     
@@ -211,7 +258,7 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
     setErrors(newErrors);
     
     if (isValid && newLat && newLng) {
-      onLocationChange(latNum, lngNum);
+      onLocationChange(roundCoord(latNum), roundCoord(lngNum));
     }
   };
 
@@ -244,6 +291,32 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
   const toggleMapExpand = () => {
     setIsMapExpanded(!isMapExpanded);
   };
+
+  // If disabled, show read-only view
+  if (disabled) {
+    return (
+      <div className="space-y-3">
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <div className="flex items-start gap-3">
+            <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-700 mb-1">Project Location</p>
+              {address ? (
+                <p className="text-sm text-gray-600">{address}</p>
+              ) : (
+                <p className="text-sm text-gray-400 italic">No location set</p>
+              )}
+              {(latitude || longitude) && (
+                <p className="text-xs text-gray-400 mt-1 font-mono">
+                  {latitude && `${latitude}`}{latitude && longitude && ', '}{longitude && `${longitude}`}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -339,28 +412,36 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
               isMapExpanded ? 'h-96' : 'h-64'
             }`}
           >
-            {!mapLoaded && (
+            {!mapLoaded && !mapError && (
               <div className="flex items-center justify-center h-full">
                 <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+              </div>
+            )}
+            {mapError && (
+              <div className="flex items-center justify-center h-full">
+                <AlertCircle className="w-8 h-8 text-red-400" />
+                <p className="text-sm text-gray-500 ml-2">{mapError}</p>
               </div>
             )}
           </div>
           
           {/* Help Text for Map */}
-          <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-            <div className="flex items-start gap-2">
-              <Globe className="w-4 h-4 text-blue-600 mt-0.5" />
-              <div className="text-sm">
-                <p className="font-medium text-blue-800">💡 Tips:</p>
-                <ul className="list-disc list-inside text-blue-700 text-xs space-y-1 mt-1">
-                  <li>Click anywhere on the map to set location</li>
-                  <li>Drag the marker for precise placement</li>
-                  <li>Use search to find specific addresses</li>
-                  <li>Click "Current" to use your device location</li>
-                </ul>
+          {showHelp && (
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <div className="flex items-start gap-2">
+                <Globe className="w-4 h-4 text-blue-600 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium text-blue-800">💡 Tips:</p>
+                  <ul className="list-disc list-inside text-blue-700 text-xs space-y-1 mt-1">
+                    <li>Click anywhere on the map to set location</li>
+                    <li>Drag the marker for precise placement</li>
+                    <li>Use search to find specific addresses</li>
+                    <li>Click "Current" to use your device location</li>
+                  </ul>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -368,29 +449,31 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
       {!useMap && (
         <div className="space-y-4">
           {/* Help Box for Manual Entry */}
-          <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-            <div className="flex items-start gap-2">
-              <Globe className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
-              <div className="text-sm">
-                <p className="font-medium text-blue-800 mb-1">📍 How to get coordinates:</p>
-                <ol className="list-decimal list-inside space-y-1 text-blue-700 text-xs">
-                  <li>Click the button below to open Google Maps</li>
-                  <li>Find and right-click on your project location</li>
-                  <li>Select "What's here?" from the menu</li>
-                  <li>Copy the coordinates (e.g., 9.0765, 7.3986)</li>
-                  <li>Paste them in the fields below</li>
-                </ol>
-                <button
-                  type="button"
-                  onClick={openGoogleMapsHelp}
-                  className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
-                >
-                  <Globe className="w-3 h-3" />
-                  Open Google Maps
-                </button>
+          {showHelp && (
+            <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+              <div className="flex items-start gap-2">
+                <Globe className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                <div className="text-sm">
+                  <p className="font-medium text-blue-800 mb-1">📍 How to get coordinates:</p>
+                  <ol className="list-decimal list-inside space-y-1 text-blue-700 text-xs">
+                    <li>Click the button below to open Google Maps</li>
+                    <li>Find and right-click on your project location</li>
+                    <li>Select "What's here?" from the menu</li>
+                    <li>Copy the coordinates (e.g., 9.0765, 7.3986)</li>
+                    <li>Paste them in the fields below</li>
+                  </ol>
+                  <button
+                    type="button"
+                    onClick={openGoogleMapsHelp}
+                    className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                  >
+                    <Globe className="w-3 h-3" />
+                    Open Google Maps
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Current Location Button */}
           <button
@@ -465,27 +548,39 @@ const LocationPicker = ({ latitude, longitude, address, onLocationChange, onAddr
           </div>
 
           {/* Example Coordinates */}
-          <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-            <p className="text-xs text-gray-600 mb-2">📌 Example coordinates for major Nigerian cities:</p>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <p className="font-medium text-gray-700">Abuja</p>
-                <p className="text-gray-500">9.0765, 7.3986</p>
-              </div>
-              <div>
-                <p className="font-medium text-gray-700">Lagos</p>
-                <p className="text-gray-500">6.5244, 3.3792</p>
-              </div>
-              <div>
-                <p className="font-medium text-gray-700">Port Harcourt</p>
-                <p className="text-gray-500">4.8156, 7.0498</p>
-              </div>
-              <div>
-                <p className="font-medium text-gray-700">Kano</p>
-                <p className="text-gray-500">12.0022, 8.5919</p>
+          {showHelp && (
+            <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+              <p className="text-xs text-gray-600 mb-2">📌 Example coordinates for major Nigerian cities:</p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="font-medium text-gray-700">Abuja</p>
+                  <p className="text-gray-500">9.0765, 7.3986</p>
+                </div>
+                <div>
+                  <p className="font-medium text-gray-700">Lagos</p>
+                  <p className="text-gray-500">6.5244, 3.3792</p>
+                </div>
+                <div>
+                  <p className="font-medium text-gray-700">Port Harcourt</p>
+                  <p className="text-gray-500">4.8156, 7.0498</p>
+                </div>
+                <div>
+                  <p className="font-medium text-gray-700">Kano</p>
+                  <p className="text-gray-500">12.0022, 8.5919</p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
+        </div>
+      )}
+      
+      {/* Current Location Display */}
+      {(latitude || longitude) && (
+        <div className="text-xs text-gray-400 border-t border-gray-100 pt-3 mt-2">
+          <span className="font-medium">Current coordinates:</span>{' '}
+          <span className="font-mono">
+            {latitude?.toFixed(6) || '—'}, {longitude?.toFixed(6) || '—'}
+          </span>
         </div>
       )}
     </div>

@@ -1,90 +1,106 @@
 # accounts/admin.py
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.contrib.auth.models import Group
 from django.utils.html import format_html
 from django.urls import reverse
-from django.db.models import Count
 from django.utils import timezone
 from .models import User, ActivityLog
 
-class ActivityLogInline(admin.TabularInline):
-    model = ActivityLog
-    extra = 0
-    fields = ['action', 'description', 'ip_address', 'created_at']
-    readonly_fields = ['action', 'description', 'ip_address', 'created_at']
-    can_delete = False
-    max_num = 10
-    show_change_link = True
-    
-    def has_add_permission(self, request, obj=None):
-        return False
 
 class UserAdmin(BaseUserAdmin):
-    ordering = ['email']
-    
-    list_display = [
+    list_display = (
         'email', 
         'full_name_display', 
-        'user_type_badge', 
-        'group_badges', 
+        'role_badge', 
         'assigned_entity_display',
-        'comment_count',
-        'last_active_display',
-        'date_joined'
-    ]
-    
-    list_filter = [
-        'is_staff', 
         'is_active', 
-        'is_public_only', 
-        'can_access_dashboard',
+        'date_joined',
+        'last_login_display'
+    )
+    
+    list_filter = (
+        'role', 
+        'is_active', 
+        'is_staff', 
+        'is_superuser',
         'is_verified',
-        'groups',
+        'can_access_dashboard',
         'date_joined'
-    ]
+    )
     
-    search_fields = ['email', 'first_name', 'last_name', 'phone', 'location']
+    search_fields = (
+        'email', 
+        'first_name', 
+        'last_name', 
+        'phone',
+        'location'
+    )
     
-    filter_horizontal = ['groups', 'user_permissions']
+    ordering = ('-date_joined',)
+    
+    readonly_fields = (
+        'id',
+        'last_login',
+        'date_joined',
+        'verification_token',
+        'comment_count',
+        'last_public_activity',
+        'upgraded_at'
+    )
     
     fieldsets = (
-        ('Account Information', {
-            'fields': ('email', 'password')
-        }),
-        ('Personal Information', {
-            'fields': ('first_name', 'last_name', 'phone', 'location')
-        }),
-        ('Dashboard Access', {
+        ('Basic Information', {
             'fields': (
-                'is_staff', 
-                'is_active', 
+                'id',
+                'email',
+                'first_name',
+                'last_name',
+                'phone',
+                'role',
+            )
+        }),
+        ('Permissions & Access', {
+            'fields': (
+                'is_active',
+                'is_staff',
+                'is_superuser',
+                'is_verified',
                 'can_access_dashboard',
-                'groups', 
-                'user_permissions'
+                'groups',
+                'user_permissions',
             ),
-            'classes': ('wide',)
+            'classes': ('collapse',)
         }),
         ('Assignment', {
-            'fields': ('assigned_department', 'assigned_agency'),
-            'classes': ('wide',)
+            'fields': (
+                'assigned_department',
+                'assigned_agency',
+            ),
+            'classes': ('collapse',)
         }),
         ('Public Portal', {
             'fields': (
-                'is_public_only', 
-                'is_verified', 
-                'verification_token', 
-                'comment_count', 
-                'last_public_activity'
+                'location',
+                'is_public_only',
+                'comment_count',
+                'last_public_activity',
             ),
             'classes': ('collapse',)
         }),
-        ('Upgrade Information', {
-            'fields': ('upgraded_by', 'upgraded_at'),
+        ('Upgrade Tracking', {
+            'fields': (
+                'upgraded_by',
+                'upgraded_at',
+            ),
             'classes': ('collapse',)
         }),
-        ('Important Dates', {
-            'fields': ('last_login', 'date_joined'),
+        ('Security', {
+            'fields': (
+                'password',
+                'last_login',
+                'date_joined',
+                'verification_token',
+            ),
             'classes': ('collapse',)
         }),
     )
@@ -92,240 +108,232 @@ class UserAdmin(BaseUserAdmin):
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('email', 'first_name', 'last_name', 'password1', 'password2', 'groups'),
+            'fields': (
+                'email',
+                'first_name',
+                'last_name',
+                'phone',
+                'role',
+                'password1',
+                'password2',
+                'is_active',
+                'is_staff',
+                'is_superuser',
+                'assigned_department',
+                'assigned_agency',
+            ),
         }),
     )
     
-    readonly_fields = ['date_joined', 'last_login', 'upgraded_at', 'verification_token']
-    
+    # Custom methods for display
     def full_name_display(self, obj):
-        return obj.full_name
-    full_name_display.short_description = 'Full Name'
+        if obj.first_name or obj.last_name:
+            return f"{obj.first_name} {obj.last_name}".strip()
+        return "-"
+    full_name_display.short_description = "Full Name"
+    full_name_display.admin_order_field = 'first_name'
+    
+    def role_badge(self, obj):
+        role_colors = {
+            'project_admin': '#3b82f6',    # blue
+            'delivery_officer': '#10b981',  # green
+            'director': '#8b5cf6',          # purple
+            'sector_expert': '#f59e0b',     # orange
+            'public_user': '#6b7280',       # gray
+        }
+        role_labels = {
+            'project_admin': 'Project Admin',
+            'delivery_officer': 'Delivery Officer',
+            'director': 'Director',
+            'sector_expert': 'Sector Expert',
+            'public_user': 'Public User',
+        }
+        color = role_colors.get(obj.role, '#6b7280')
+        label = role_labels.get(obj.role, obj.role)
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500;">{}</span>',
+            color, label
+        )
+    role_badge.short_description = "Role"
+    role_badge.admin_order_field = 'role'
     
     def assigned_entity_display(self, obj):
-        entity = obj.assigned_entity
-        if entity:
-            if entity['type'] == 'department':
-                return format_html('<span style="color: #3b82f6;">🏢 {}</span>', entity['name'])
-            else:
-                return format_html('<span style="color: #8b5cf6;">🏛️ {}</span>', entity['name'])
-        return '-'
-    assigned_entity_display.short_description = 'Department/Agency'
-    
-    def user_type_badge(self, obj):
-        if obj.is_superuser:
-            return format_html('<span style="background-color: #ef4444; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">👑 Super Admin</span>')
-        elif obj.is_staff and obj.can_access_dashboard:
-            # Check user's group for more specific badge
-            groups = obj.groups.all()
-            if groups.filter(name='Director').exists():
-                return format_html('<span style="background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🎯 Director</span>')
-            elif groups.filter(name='SectorExpert').exists():
-                return format_html('<span style="background-color: #8b5cf6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🔬 Sector Expert</span>')
-            elif groups.filter(name='Staff').exists():
-                return format_html('<span style="background-color: #22c55e; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">👷 Staff</span>')
-            elif groups.filter(name='ProjectAdmin').exists():
-                return format_html('<span style="background-color: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">📋 Project Admin</span>')
-            return format_html('<span style="background-color: #22c55e; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">📊 Staff</span>')
-        elif obj.can_access_dashboard:
-            return format_html('<span style="background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">👤 Dashboard User</span>')
-        elif not obj.is_public_only:
-            return format_html('<span style="background-color: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">⏳ Pending</span>')
-        else:
-            return format_html('<span style="background-color: #6b7280; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🌐 Public User</span>')
-    user_type_badge.short_description = 'User Type'
-    
-    def group_badges(self, obj):
-        groups = obj.groups.all()
-        if not groups:
-            return format_html('<span style="color: #9ca3af;">No groups assigned</span>')
-        
-        group_colors = {
-            'Super Admin': '#ef4444',
-            'Director': '#3b82f6',
-            'SectorExpert': '#8b5cf6',
-            'Staff': '#22c55e',
-            'ProjectAdmin': '#f59e0b',
-            'Viewer': '#6b7280',
-        }
-        
-        badges = []
-        for group in groups:
-            color = group_colors.get(group.name, '#6b7280')
-            badges.append(format_html(
-                '<span style="background-color: {}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 10px; margin-right: 4px;">{}</span>',
-                color, group.name
-            ))
-        return format_html(''.join(badges))
-    group_badges.short_description = 'Groups'
-    
-    def last_active_display(self, obj):
-        if obj.last_public_activity:
-            return format_html('<span title="{}">{}</span>', 
-                obj.last_public_activity.strftime('%Y-%m-%d %H:%M'),
-                obj.last_public_activity.strftime('%Y-%m-%d')
+        if obj.assigned_department:
+            return format_html(
+                '<span style="background-color: #eff6ff; color: #1e40af; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🏛️ {}</span>',
+                obj.assigned_department.name
             )
-        return '-'
-    last_active_display.short_description = 'Last Active'
+        elif obj.assigned_agency:
+            return format_html(
+                '<span style="background-color: #f3e8ff; color: #6b21a5; padding: 2px 8px; border-radius: 12px; font-size: 11px;">🏢 {}</span>',
+                obj.assigned_agency.name
+            )
+        return "-"
+    assigned_entity_display.short_description = "Assigned Entity"
     
-    inlines = [ActivityLogInline]
+    def last_login_display(self, obj):
+        if obj.last_login:
+            return timezone.localtime(obj.last_login).strftime("%Y-%m-%d %H:%M")
+        return "Never"
+    last_login_display.short_description = "Last Login"
     
-    actions = [
-        'upgrade_to_dashboard', 
-        'downgrade_to_public',
-        'verify_users',
-        'assign_director',
-        'assign_sector_expert',
-        'assign_staff',
-        'assign_project_admin'
-    ]
+    # Actions
+    actions = ['make_active', 'make_inactive', 'upgrade_to_project_admin', 'upgrade_to_delivery_officer', 'upgrade_to_director', 'upgrade_to_sector_expert']
     
-    def upgrade_to_dashboard(self, request, queryset):
-        updated = queryset.update(
-            is_public_only=False,
-            can_access_dashboard=True,
-            upgraded_by=request.user,
-            upgraded_at=timezone.now()
-        )
-        self.message_user(request, f'{updated} users upgraded to dashboard access.')
-    upgrade_to_dashboard.short_description = 'Upgrade to Dashboard Access'
+    def make_active(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'{updated} users were successfully activated.')
+    make_active.short_description = "Activate selected users"
     
-    def downgrade_to_public(self, request, queryset):
-        updated = queryset.update(
-            is_public_only=True,
-            can_access_dashboard=False,
-            is_staff=False
-        )
-        self.message_user(request, f'{updated} users downgraded to public access.')
-    downgrade_to_public.short_description = 'Downgrade to Public Access'
+    def make_inactive(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'{updated} users were successfully deactivated.')
+    make_inactive.short_description = "Deactivate selected users"
     
-    def verify_users(self, request, queryset):
-        updated = queryset.update(is_verified=True)
-        self.message_user(request, f'{updated} users marked as verified.')
-    verify_users.short_description = 'Verify selected users'
+    def upgrade_to_project_admin(self, request, queryset):
+        updated = queryset.update(role='project_admin', can_access_dashboard=True)
+        self.message_user(request, f'{updated} users were upgraded to Project Admin.')
+    upgrade_to_project_admin.short_description = "Upgrade to Project Admin"
     
-    def assign_director(self, request, queryset):
-        from django.contrib.auth.models import Group
-        group, _ = Group.objects.get_or_create(name='Director')
-        for user in queryset:
-            user.groups.clear()
-            user.groups.add(group)
-            user.is_staff = True
-            user.can_access_dashboard = True
-            user.is_public_only = False
-            user.save()
-        self.message_user(request, f'{queryset.count()} users assigned to Director group.')
-    assign_director.short_description = 'Assign to Director'
+    def upgrade_to_delivery_officer(self, request, queryset):
+        updated = queryset.update(role='delivery_officer', can_access_dashboard=True)
+        self.message_user(request, f'{updated} users were upgraded to Delivery Officer.')
+    upgrade_to_delivery_officer.short_description = "Upgrade to Delivery Officer"
     
-    def assign_sector_expert(self, request, queryset):
-        from django.contrib.auth.models import Group
-        group, _ = Group.objects.get_or_create(name='SectorExpert')
-        for user in queryset:
-            user.groups.clear()
-            user.groups.add(group)
-            user.is_staff = True
-            user.can_access_dashboard = True
-            user.is_public_only = False
-            user.save()
-        self.message_user(request, f'{queryset.count()} users assigned to Sector Expert group.')
-    assign_sector_expert.short_description = 'Assign to Sector Expert'
+    def upgrade_to_director(self, request, queryset):
+        updated = queryset.update(role='director', can_access_dashboard=True)
+        self.message_user(request, f'{updated} users were upgraded to Director.')
+    upgrade_to_director.short_description = "Upgrade to Director"
     
-    def assign_staff(self, request, queryset):
-        from django.contrib.auth.models import Group
-        group, _ = Group.objects.get_or_create(name='Staff')
-        for user in queryset:
-            user.groups.clear()
-            user.groups.add(group)
-            user.is_staff = True
-            user.can_access_dashboard = True
-            user.is_public_only = False
-            user.save()
-        self.message_user(request, f'{queryset.count()} users assigned to Staff group.')
-    assign_staff.short_description = 'Assign to Staff'
+    def upgrade_to_sector_expert(self, request, queryset):
+        updated = queryset.update(role='sector_expert', can_access_dashboard=True)
+        self.message_user(request, f'{updated} users were upgraded to Sector Expert.')
+    upgrade_to_sector_expert.short_description = "Upgrade to Sector Expert"
     
-    def assign_project_admin(self, request, queryset):
-        from django.contrib.auth.models import Group
-        group, _ = Group.objects.get_or_create(name='ProjectAdmin')
-        for user in queryset:
-            user.groups.clear()
-            user.groups.add(group)
-            user.is_staff = True
-            user.can_access_dashboard = True
-            user.is_public_only = False
-            user.save()
-        self.message_user(request, f'{queryset.count()} users assigned to Project Admin group.')
-    assign_project_admin.short_description = 'Assign to Project Admin'
+    def save_model(self, request, obj, form, change):
+        if not change:  # New user creation
+            obj.set_password(form.cleaned_data.get('password1'))
+        super().save_model(request, obj, form, change)
+
 
 class ActivityLogAdmin(admin.ModelAdmin):
-    list_display = ['id', 'user_link', 'action_badge', 'description_short', 'ip_address', 'created_at']
-    list_filter = ['action', 'created_at']
-    search_fields = ['user__email', 'description', 'ip_address']
-    readonly_fields = ['user', 'action', 'description', 'ip_address', 'user_agent', 'created_at']
+    list_display = (
+        'user_email',
+        'action_badge',
+        'description_truncated',
+        'created_at_display',
+        'ip_address',
+        'user_agent_truncated'
+    )
     
-    def has_add_permission(self, request):
-        return False
+    list_filter = (
+        'action',
+        'created_at',
+    )
     
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
+    search_fields = (
+        'user__email',
+        'description',
+        'ip_address',
+        'user_agent'
+    )
     
-    def user_link(self, obj):
-        url = reverse('admin:accounts_user_change', args=[obj.user.id])
-        return format_html('<a href="{}" style="font-weight: bold;">{}</a>', url, obj.user.email)
-    user_link.short_description = 'User'
+    readonly_fields = (
+        'user',
+        'action',
+        'description',
+        'ip_address',
+        'user_agent',
+        'created_at'
+    )
+    
+    ordering = ('-created_at',)
+    
+    fieldsets = (
+        ('Activity Information', {
+            'fields': (
+                'user',
+                'action',
+                'description',
+            )
+        }),
+        ('Technical Details', {
+            'fields': (
+                'ip_address',
+                'user_agent',
+                'created_at',
+            ),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def user_email(self, obj):
+        return obj.user.email
+    user_email.short_description = "User"
+    user_email.admin_order_field = 'user__email'
     
     def action_badge(self, obj):
         action_colors = {
-            'login': '#22c55e',
+            'login': '#10b981',
             'logout': '#6b7280',
             'create': '#3b82f6',
-            'initiative_created': '#3b82f6',
+            'activity_created': '#3b82f6',
             'update': '#f59e0b',
-            'initiative_updated': '#f59e0b',
+            'activity_updated': '#f59e0b',
             'delete': '#ef4444',
-            'initiative_deleted': '#ef4444',
-            'progress_recorded': '#10b981',
-            'export': '#8b5cf6',
-            'generate_report': '#8b5cf6',
-            'report_generated': '#8b5cf6',
-            'change_password': '#ef4444',
-            'update_profile': '#10b981',
+            'activity_deleted': '#ef4444',
+            'change_password': '#8b5cf6',
+            'update_profile': '#06b6d4',
+            'quarterly_progress_submitted': '#14b8a6',
+            'quarterly_progress_approved': '#10b981',
+            'expert_assessment_completed': '#8b5cf6',
+            'generate_report': '#ec4899',
+            'export': '#06b6d4',
             'user_upgraded': '#8b5cf6',
             'role_assigned': '#8b5cf6',
         }
         color = action_colors.get(obj.action, '#6b7280')
-        return format_html('<span style="background-color: {}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">{}</span>', 
-            color, obj.action.replace('_', ' ').title())
-    action_badge.short_description = 'Action'
+        label = obj.action.replace('_', ' ').title()
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">{}</span>',
+            color, label
+        )
+    action_badge.short_description = "Action"
+    action_badge.admin_order_field = 'action'
     
-    def description_short(self, obj):
-        if len(obj.description) > 50:
-            return obj.description[:50] + '...'
+    def description_truncated(self, obj):
+        if len(obj.description) > 60:
+            return obj.description[:60] + '...'
         return obj.description
-    description_short.short_description = 'Description'
-
-# Custom Group Admin
-class GroupAdmin(admin.ModelAdmin):
-    list_display = ['name', 'user_count', 'permission_count']
-    search_fields = ['name']
-    filter_horizontal = ['permissions']
+    description_truncated.short_description = "Description"
     
-    def user_count(self, obj):
-        return obj.user_set.count()
-    user_count.short_description = 'Users'
+    def user_agent_truncated(self, obj):
+        if len(obj.user_agent) > 50:
+            return obj.user_agent[:50] + '...'
+        return obj.user_agent or '-'
+    user_agent_truncated.short_description = "User Agent"
     
-    def permission_count(self, obj):
-        return obj.permissions.count()
-    permission_count.short_description = 'Permissions'
+    def created_at_display(self, obj):
+        return timezone.localtime(obj.created_at).strftime("%Y-%m-%d %H:%M:%S")
+    created_at_display.short_description = "Created At"
+    created_at_display.admin_order_field = 'created_at'
+    
+    def has_add_permission(self, request):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
 
-# Unregister default Group admin and register our enhanced version
-admin.site.unregister(Group)
-admin.site.register(Group, GroupAdmin)
 
-# Register models
+# Register models with custom admin interfaces
 admin.site.register(User, UserAdmin)
 admin.site.register(ActivityLog, ActivityLogAdmin)
 
+
 # Custom admin site configuration
-admin.site.site_header = 'FME Performance Tracking System Admin'
-admin.site.site_title = 'FME PTS Admin'
-admin.site.index_title = 'Welcome to Federal Ministry of Environment Performance Tracking System'
+admin.site.site_header = "Environmental Monitoring System Admin"
+admin.site.site_title = "EMS Admin Portal"
+admin.site.index_title = "Welcome to Environmental Monitoring System Administration"

@@ -1,307 +1,515 @@
 // src/components/Management/AgencyManagement.jsx
-import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, X, Save, Landmark, Search, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Plus, Edit, Trash2, Search, RefreshCw, Landmark, AlertCircle,
+  Save, X, LayoutGrid, LayoutList, ExternalLink, Globe,
+} from 'lucide-react';
 import mainApi from '../../services/mainApi';
-import accountsApi from '../../services/accountsApi';
+import { useAuth } from '../../hooks/useAuth';
 import toast from 'react-hot-toast';
 
-const AgencyManagement = () => {
-  const [agenciesList, setAgenciesList] = useState([]);
-  const [departmentsList, setDepartmentsList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [editingAgency, setEditingAgency] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    code: '',
-    website: ''
+const extractApiError = (err, fallback = 'Something went wrong') => {
+  const data = err?.response?.data;
+  if (!data) return err?.message || fallback;
+  if (typeof data === 'string') return data;
+  if (data.detail) return data.detail;
+  const parts = [];
+  Object.entries(data).forEach(([f, v]) => {
+    if (Array.isArray(v)) parts.push(`${f}: ${v.join(' ')}`);
+    else if (typeof v === 'string') parts.push(`${f}: ${v}`);
   });
-  const [submitting, setSubmitting] = useState(false);
+  return parts.length ? parts.join(' | ') : fallback;
+};
 
-  // Destructure API methods
-  const { agencies, departments } = mainApi;
+const inputCls =
+  'w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white ' +
+  'focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-400';
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+const emptyForm = () => ({ name: '', code: '', website: '', description: '' });
 
-  const fetchData = async () => {
+const AgencyManagement = () => {
+  const { userRole, user } = useAuth();
+  const canManage = userRole === 'project_admin' || user?.is_superuser || userRole === 'super_admin';
+
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState('grid');
+
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(emptyForm());
+  const [saving, setSaving] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => { fetchItems(); }, []);
+
+  const fetchItems = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const [agenciesRes, departmentsRes] = await Promise.all([
-        agencies.list(),
-        departments.list()
-      ]);
-      setAgenciesList(agenciesRes.data);
-      setDepartmentsList(departmentsRes.data);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      toast.error('Failed to fetch agencies');
+      const data = await mainApi.getPublicAgencies();
+      setItems(data || []);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to load agencies');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOpenModal = (agency = null) => {
-    if (agency) {
-      setEditingAgency(agency);
-      setFormData({
-        name: agency.name,
-        description: agency.description || '',
-        code: agency.code || '',
-        website: agency.website || ''
-      });
-    } else {
-      setEditingAgency(null);
-      setFormData({ name: '', description: '', code: '', website: '' });
-    }
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return items;
+    return items.filter(
+      (a) =>
+        a.name?.toLowerCase().includes(term) ||
+        a.code?.toLowerCase().includes(term) ||
+        a.description?.toLowerCase().includes(term)
+    );
+  }, [items, search]);
+
+  const kpi = useMemo(() => {
+    const withSite = items.filter((a) => a.website).length;
+    const withDesc = items.filter((a) => a.description).length;
+    return { total: items.length, withSite, withDesc };
+  }, [items]);
+
+  const openCreate = () => { setEditing(null); setForm(emptyForm()); setShowModal(true); };
+  const openEdit = (a) => {
+    setEditing(a);
+    setForm({
+      name: a.name || '',
+      code: a.code || '',
+      website: a.website || '',
+      description: a.description || '',
+    });
     setShowModal(true);
   };
-
-  const handleCloseModal = () => {
+  const closeModal = () => {
+    if (saving) return;
     setShowModal(false);
-    setEditingAgency(null);
-    setFormData({ name: '', description: '', code: '', website: '' });
+    setEditing(null);
+    setForm(emptyForm());
   };
+  const setField = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
-  const handleSubmit = async (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (!formData.name.trim()) {
-      toast.error('Agency name is required');
-      return;
+    if (!form.name.trim()) return toast.error('Agency name is required');
+    if (form.website && !/^https?:\/\//.test(form.website.trim())) {
+      return toast.error('Website must start with http:// or https://');
     }
 
-    setSubmitting(true);
+    const payload = {
+      name: form.name.trim(),
+      code: form.code.trim(),
+      website: form.website.trim() || null,
+      description: form.description.trim(),
+    };
+
+    setSaving(true);
     try {
-      if (editingAgency) {
-        await agencies.update(editingAgency.id, formData);
-        await accountsApi.logActivity({ 
-          action: 'update', 
-          description: `Updated agency: ${formData.name}` 
-        });
-        toast.success('Agency updated successfully');
+      if (editing) {
+        await mainApi.updateAgency(editing.id, payload);
+        toast.success('Agency updated');
       } else {
-        await agencies.create(formData);
-        await accountsApi.logActivity({ 
-          action: 'create', 
-          description: `Created agency: ${formData.name}` 
-        });
-        toast.success('Agency created successfully');
+        await mainApi.createAgency(payload);
+        toast.success('Agency created');
       }
-      fetchData();
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving agency:', error);
-      toast.error(error.response?.data?.name?.[0] || 'Failed to save agency');
+      closeModal();
+      await fetchItems();
+    } catch (err) {
+      console.error(err);
+      toast.error(extractApiError(err, 'Failed to save agency'));
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id, name) => {
-    if (window.confirm(`Are you sure you want to delete "${name}"? This will also delete all associated initiatives.`)) {
-      try {
-        await agencies.delete(id);
-        await accountsApi.logActivity({ 
-          action: 'delete', 
-          description: `Deleted agency: ${name}` 
-        });
-        toast.success('Agency deleted successfully');
-        fetchData();
-      } catch (error) {
-        console.error('Error deleting agency:', error);
-        toast.error('Failed to delete agency');
-      }
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await mainApi.deleteAgency(deleteTarget.id);
+      toast.success('Agency deleted');
+      setDeleteTarget(null);
+      await fetchItems();
+    } catch (err) {
+      console.error(err);
+      toast.error(extractApiError(err, 'Failed to delete agency'));
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const filteredAgencies = agenciesList.filter(agency =>
-    agency.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (agency.code && agency.code.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
-
-  if (loading) {
+  if (!canManage) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-500">Loading agencies...</p>
-        </div>
+      <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
+        <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+        <h3 className="text-base font-medium text-gray-900 mb-1">Access Restricted</h3>
+        <p className="text-sm text-gray-500">Only Project Administrators can manage agencies.</p>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Agencies</h2>
-          <p className="text-gray-600 mt-1">Manage agencies under the Federal Ministry of Environment</p>
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl border border-gray-200/80 shadow-sm p-4">
+        <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900">Agencies</h1>
+            <p className="text-xs text-gray-500 mt-0.5">Agencies under the Ministry</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchItems}
+              className="p-2.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded-xl transition"
+              title="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold shadow-sm transition min-h-[44px]"
+            >
+              <Plus className="w-4 h-4" /> New agency
+            </button>
+          </div>
         </div>
-        <button
-          onClick={() => handleOpenModal()}
-          className="bg-gradient-to-r from-primary-500 to-secondary-500 hover:from-primary-600 hover:to-secondary-600 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 shadow-md hover:shadow-lg transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          Add Agency
-        </button>
       </div>
 
-      {/* Search Bar */}
-      <div className="mb-6">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+      <div className="grid grid-cols-3 gap-3">
+        <Kpi icon={Landmark} label="Agencies" value={kpi.total} tone="bg-teal-50 text-teal-700" />
+        <Kpi icon={Globe} label="With website" value={kpi.withSite} tone="bg-blue-50 text-blue-700" />
+        <Kpi icon={LayoutList} label="With description" value={kpi.withDesc} tone="bg-purple-50 text-purple-700" />
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
           <input
             type="text"
-            placeholder="Search agencies by name or code..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none text-sm"
+            placeholder="Search agencies…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className={`${inputCls} pl-9`}
           />
+        </div>
+        <div className="inline-flex rounded-xl bg-gray-100 p-1 self-start">
+          <button
+            onClick={() => setViewMode('grid')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              viewMode === 'grid' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" /> Grid
+          </button>
+          <button
+            onClick={() => setViewMode('list')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+              viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+            }`}
+          >
+            <LayoutList className="w-3.5 h-3.5" /> List
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredAgencies.map((agency) => (
-          <div key={agency.id} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all p-5">
-            <div className="flex items-start justify-between mb-4">
-              <div className="bg-gradient-to-br from-cyan-500 to-blue-500 p-3 rounded-xl shadow-md">
-                <Landmark className="w-6 h-6 text-white" />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleOpenModal(agency)}
-                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => handleDelete(agency.id, agency.name)}
-                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">{agency.name}</h3>
-            {agency.code && (
-              <p className="text-xs text-gray-500 mb-2">Code: {agency.code}</p>
-            )}
-            {agency.description && (
-              <p className="text-sm text-gray-600 mt-2 line-clamp-2">{agency.description}</p>
-            )}
-            {agency.website && (
-              <a
-                href={agency.website}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 mt-2"
-              >
-                <ExternalLink className="w-3 h-3" />
-                Visit Website
-              </a>
-            )}
-            <div className="mt-3 pt-3 border-t border-gray-100">
-              <p className="text-xs text-gray-400">Created: {new Date(agency.created_at).toLocaleDateString()}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {filteredAgencies.length === 0 && (
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-          <Landmark className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500">No agencies found</p>
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-teal-600" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <EmptyState hasSearch={!!search} onCreate={openCreate} />
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {filtered.map((a) => (
+            <AgencyCard key={a.id} agency={a} onEdit={openEdit} onDelete={setDeleteTarget} />
+          ))}
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+          {filtered.map((a) => (
+            <AgencyRow key={a.id} agency={a} onEdit={openEdit} onDelete={setDeleteTarget} />
+          ))}
         </div>
       )}
 
-      {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 animate-fade-in-up">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold text-gray-900">
-                {editingAgency ? 'Edit Agency' : 'Add New Agency'}
-              </h3>
-              <button onClick={handleCloseModal} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
+        <Modal onClose={closeModal}>
+          <form onSubmit={submit}>
+            <div className="sticky top-0 z-10 bg-gradient-to-r from-teal-600 to-emerald-600 px-5 py-4 rounded-t-2xl flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-white" />
+                <h2 className="text-base font-bold text-white">
+                  {editing ? 'Edit agency' : 'New agency'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeModal}
+                disabled={saving}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <form onSubmit={handleSubmit}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Agency Name *
-                </label>
+            <div className="p-5 space-y-4">
+              <Field label="Agency name" required>
                 <input
                   type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none text-sm"
-                  placeholder="e.g., National Oil Spill Detection and Response Agency (NOSDRA)"
+                  value={form.name}
+                  onChange={(e) => setField('name', e.target.value)}
+                  className={inputCls}
+                  placeholder="e.g. National Oil Spill Detection and Response Agency"
                   autoFocus
                 />
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Code (Optional)
-                </label>
+              </Field>
+              <Field label="Code" hint="optional, unique">
                 <input
                   type="text"
-                  value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none text-sm"
-                  placeholder="e.g., NOSDRA"
+                  value={form.code}
+                  onChange={(e) => setField('code', e.target.value)}
+                  className={inputCls}
+                  placeholder="e.g. NOSDRA"
                 />
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Website (Optional)
-                </label>
+              </Field>
+              <Field label="Website" hint="optional">
                 <input
                   type="url"
-                  value={formData.website}
-                  onChange={(e) => setFormData({ ...formData, website: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none text-sm"
+                  value={form.website}
+                  onChange={(e) => setField('website', e.target.value)}
+                  className={inputCls}
                   placeholder="https://example.gov.ng"
                 />
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description
-                </label>
+              </Field>
+              <Field label="Description" hint="optional">
                 <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  rows="3"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none text-sm resize-none"
-                  placeholder="Agency description..."
+                  rows={3}
+                  value={form.description}
+                  onChange={(e) => setField('description', e.target.value)}
+                  className={`${inputCls} resize-none`}
+                  placeholder="What this agency does…"
                 />
-              </div>
-              <div className="flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={handleCloseModal}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-4 py-2 bg-gradient-to-r from-primary-500 to-secondary-500 text-white rounded-lg flex items-center gap-2 hover:shadow-md transition disabled:opacity-50"
-                >
-                  <Save className="w-4 h-4" />
-                  {submitting ? 'Saving...' : editingAgency ? 'Update' : 'Create'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+              </Field>
+            </div>
+            <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-5 py-3 flex gap-2 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={closeModal}
+                disabled={saving}
+                className="flex-1 inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 transition min-h-[44px] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 transition min-h-[44px] disabled:opacity-50"
+              >
+                {saving ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" /> {editing ? 'Update' : 'Create'}
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <ConfirmDelete
+          name={deleteTarget.name}
+          deleting={deleting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDelete}
+          warning="Activities assigned to this agency may also be affected."
+        />
       )}
     </div>
   );
 };
+
+const Kpi = ({ icon: Icon, label, value, tone }) => (
+  <div className="bg-white rounded-2xl border border-gray-200/80 shadow-sm p-3 flex items-center gap-3">
+    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${tone}`}>
+      <Icon className="w-4 h-4" />
+    </div>
+    <div>
+      <p className="text-[11px] text-gray-500">{label}</p>
+      <p className="text-lg font-bold text-gray-900 leading-tight">{value}</p>
+    </div>
+  </div>
+);
+
+const EmptyState = ({ hasSearch, onCreate }) => (
+  <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center">
+    <Landmark className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+    <h3 className="text-base font-medium text-gray-900 mb-1">
+      {hasSearch ? 'No agencies match your search' : 'No agencies yet'}
+    </h3>
+    <p className="text-sm text-gray-500 mb-4">
+      {hasSearch ? 'Try a different search term.' : 'Add the first agency to get started.'}
+    </p>
+    {!hasSearch && (
+      <button
+        onClick={onCreate}
+        className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold min-h-[44px]"
+      >
+        <Plus className="w-4 h-4" /> New agency
+      </button>
+    )}
+  </div>
+);
+
+const AgencyCard = ({ agency, onEdit, onDelete }) => (
+  <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 hover:shadow-md transition group">
+    <div className="flex items-start gap-3">
+      <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center shrink-0">
+        <Landmark className="w-5 h-5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <h3 className="text-sm font-semibold text-gray-900 truncate">{agency.name}</h3>
+        {agency.code && <p className="text-[11px] text-gray-500 font-mono mt-0.5">{agency.code}</p>}
+        {agency.description && (
+          <p className="text-xs text-gray-600 mt-1.5 line-clamp-2">{agency.description}</p>
+        )}
+        {agency.website && (
+          <a
+            href={agency.website}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-[11px] text-teal-700 hover:text-teal-800 font-semibold"
+          >
+            <ExternalLink className="w-3 h-3" /> Visit site
+          </a>
+        )}
+      </div>
+      <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
+        <button
+          onClick={() => onEdit(agency)}
+          className="p-1.5 text-gray-500 hover:text-teal-700 hover:bg-teal-50 rounded-lg"
+        >
+          <Edit className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => onDelete(agency)}
+          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
+const AgencyRow = ({ agency, onEdit, onDelete }) => (
+  <div className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50/60 transition">
+    <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center shrink-0">
+      <Landmark className="w-4 h-4" />
+    </div>
+    <div className="flex-1 min-w-0">
+      <p className="text-sm font-semibold text-gray-900 truncate">{agency.name}</p>
+      <p className="text-[11px] text-gray-500">
+        {agency.code ? <span className="font-mono">{agency.code}</span> : 'No code'}
+        {agency.website && <> · {agency.website}</>}
+      </p>
+    </div>
+    <div className="flex items-center gap-1">
+      <button
+        onClick={() => onEdit(agency)}
+        className="p-1.5 text-gray-500 hover:text-teal-700 hover:bg-teal-50 rounded-lg"
+      >
+        <Edit className="w-4 h-4" />
+      </button>
+      <button
+        onClick={() => onDelete(agency)}
+        className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  </div>
+);
+
+const Modal = ({ children, onClose }) => (
+  <div
+    className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+    onClick={(e) => e.target === e.currentTarget && onClose()}
+  >
+    <div
+      className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto shadow-2xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  </div>
+);
+
+const Field = ({ label, hint, required, children }) => (
+  <div>
+    <label className="block text-xs font-medium text-gray-700 mb-1">
+      {label}
+      {required && <span className="text-red-500 ml-0.5">*</span>}
+      {hint && <span className="text-gray-400 font-normal ml-1">({hint})</span>}
+    </label>
+    {children}
+  </div>
+);
+
+const ConfirmDelete = ({ name, deleting, onCancel, onConfirm, warning }) => (
+  <div
+    className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    onClick={(e) => e.target === e.currentTarget && !deleting && onCancel()}
+  >
+    <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl">
+      <div className="flex items-start gap-3">
+        <div className="bg-red-100 text-red-600 p-2 rounded-xl shrink-0">
+          <Trash2 className="w-5 h-5" />
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-gray-900">Delete this item?</h3>
+          <p className="text-sm text-gray-600 mt-1">
+            <span className="font-medium">"{name}"</span> will be permanently removed.
+          </p>
+          {warning && <p className="text-xs text-amber-700 mt-2">{warning}</p>}
+        </div>
+      </div>
+      <div className="mt-4 flex gap-2 justify-end">
+        <button
+          onClick={onCancel}
+          disabled={deleting}
+          className="px-4 py-2 rounded-xl bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 min-h-[44px] disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={deleting}
+          className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 min-h-[44px] disabled:opacity-50 inline-flex items-center gap-2"
+        >
+          {deleting ? (
+            <>
+              <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              Deleting…
+            </>
+          ) : (
+            <>
+              <Trash2 className="w-4 h-4" /> Delete
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  </div>
+);
 
 export default AgencyManagement;

@@ -6,11 +6,12 @@ import TopNav from '../components/Layout/TopNav';
 import QuickActionsBar from '../components/Layout/QuickActionsBar';
 import Footer from '../components/Layout/Footer';
 import DashboardHome from '../components/Dashboard/DashboardHome';
-import InitiativeList from '../components/Dashboard/InitiativeList';
-import InitiativeForm from '../components/Dashboard/InitiativeForm';
-import InitiativeDetail from '../components/Dashboard/InitiativeDetail';
+import ActivityList from '../components/Dashboard/ActivityList';
+import ActivityForm from '../components/Dashboard/ActivityForm';
+import ActivityDetail from '../components/Dashboard/ActivityDetail';
 import DepartmentManagement from '../components/Management/DepartmentManagement';
 import AgencyManagement from '../components/Management/AgencyManagement';
+import IndicatorManagement from '../components/Management/IndicatorManagement';
 import PriorityAreaManagement from '../components/Management/PriorityAreaManagement';
 import DeliverableManagement from '../components/Management/DeliverableManagement';
 import Reports from './Reports';
@@ -25,8 +26,7 @@ const Dashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [viewMode, setViewMode] = useState('grid');
   const [filterOpen, setFilterOpen] = useState(false);
-  const { user } = useAuth();
-  const userRole = user?.role;
+  const { user, userRole } = useAuth();
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
 
@@ -40,26 +40,26 @@ const Dashboard = () => {
   };
 
   // Role-based access checks
-  const canViewManagement = userRole === 'project_admin' || userRole === 'super_admin';
-  const canViewReports = userRole !== 'sector_expert';
-  const canViewInitiatives = true; // All authenticated users can view initiatives
-  const canCreateInitiative = userRole === 'project_admin' || userRole === 'super_admin';
-  const canViewMyTasks = userRole === 'staff' || userRole === 'super_admin';
-  const canViewPendingApprovals = userRole === 'director' || userRole === 'super_admin';
-  const canViewPendingAssessments = userRole === 'sector_expert' || userRole === 'super_admin';
-  const isSuperAdmin = user?.is_superuser;
+  const isAdmin = user?.is_superuser === true || userRole === 'super_admin';
+  const canViewManagement = userRole === 'project_admin' || isAdmin;
+  const canViewUserManagement = isAdmin;
+  const canCreateActivity = userRole === 'project_admin' || isAdmin;
+  const canViewMyTasks = userRole === 'delivery_officer';
+  const canViewPendingApprovals = userRole === 'director';
+  const canViewPendingAssessments = userRole === 'sector_expert';
+  const canViewActivities = userRole === 'project_admin' || userRole === 'director' || isAdmin;
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-50 via-green-50/30 to-emerald-50/40">
       {/* Animated Background Pattern */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-r from-primary-200/30 to-secondary-200/30 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-r from-blue-200/30 to-purple-200/30 rounded-full blur-3xl"></div>
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-r from-green-200/30 to-emerald-200/30 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-r from-blue-200/30 to-cyan-200/30 rounded-full blur-3xl"></div>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-r from-emerald-200/20 to-teal-200/20 rounded-full blur-3xl"></div>
       </div>
 
       {/* Sidebar Component */}
-      <Sidebar sidebarOpen={sidebarOpen} toggleSidebar={toggleSidebar} isAdmin={isSuperAdmin} />
+      <Sidebar sidebarOpen={sidebarOpen} toggleSidebar={toggleSidebar} />
 
       {/* Main content area */}
       <div className="flex-1 lg:pl-80 flex flex-col">
@@ -67,73 +67,74 @@ const Dashboard = () => {
         <TopNav toggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
 
         {/* Quick Actions Bar - Below TopNav */}
-        <QuickActionsBar 
+        <QuickActionsBar
           viewMode={viewMode}
           setViewMode={setViewMode}
-          onExport={handleExport}
           onFilter={handleFilter}
         />
 
         {/* Page Content */}
         <main className="flex-1 p-4 lg:p-6">
           <Routes>
-            {/* Overview - Everyone */}
             <Route path="/" element={<DashboardHome />} />
             
-            {/* Initiatives - Everyone can view, but only some can create/edit */}
-            {canViewInitiatives && (
+            {/* Activities - READ ONLY for Sector Expert */}
+            {userRole === 'sector_expert' && (
               <>
-                <Route path="/initiatives" element={<InitiativeList viewMode={viewMode} setViewMode={setViewMode} />} />
-                <Route path="/initiatives/:id" element={<InitiativeDetail />} />
-                {/* Create and Edit routes - only for Project Admin and Super Admin */}
-                {canCreateInitiative && (
-                  <>
-                    <Route path="/initiatives/new" element={<InitiativeForm />} />
-                    <Route path="/initiatives/:id/edit" element={<InitiativeForm />} />
-                  </>
-                )}
+                <Route path="/activities" element={<ActivityList />} />
+                <Route path="/activities/:id" element={<ActivityDetail />} />
               </>
             )}
             
-            {/* Management Routes - Only for Project Admin and Super Admin */}
-            {canViewManagement && (
+            {/* Activities - FULL ACCESS for Project Admin and Director */}
+            {(userRole === 'project_admin' || userRole === 'director') && (
+              <>
+                <Route path="/activities" element={<ActivityList />} />
+                <Route path="/activities/new" element={<ActivityForm />} />
+                <Route path="/activities/:id" element={<ActivityDetail />} />
+                <Route path="/activities/:id/edit" element={<ActivityForm />} />
+              </>
+            )}
+            
+            {/* Delivery Officer routes */}
+            {userRole === 'delivery_officer' && (
+              <>
+                <Route path="/my-tasks" element={<MyTasks />} />
+                <Route path="/activities/:id" element={<ActivityDetail />} />
+              </>
+            )}
+            
+            {/* Director routes */}
+            {userRole === 'director' && (
+              <Route path="/pending-approvals" element={<PendingApprovals />} />
+            )}
+            
+            {/* Sector Expert routes */}
+            {userRole === 'sector_expert' && (
+              <Route path="/pending-assessments" element={<PendingAssessments />} />
+            )}
+            
+            {/* Management - Project Admin only */}
+            {userRole === 'project_admin' && (
               <>
                 <Route path="/departments" element={<DepartmentManagement />} />
                 <Route path="/agencies" element={<AgencyManagement />} />
                 <Route path="/priority-areas" element={<PriorityAreaManagement />} />
                 <Route path="/deliverables" element={<DeliverableManagement />} />
+                <Route path="/indicators" element={<IndicatorManagement />} />
               </>
             )}
             
-            {/* Reports - Everyone except Sector Expert */}
-            {canViewReports && (
-              <Route path="/reports" element={<Reports />} />
-            )}
-            
-            {/* Settings - Everyone */}
-            <Route path="/settings" element={<Settings />} />
-            
-            {/* My Tasks - Only for Staff */}
-            {canViewMyTasks && (
-              <Route path="/my-tasks" element={<MyTasks />} />
-            )}
-            
-            {/* Pending Approvals - Only for Director */}
-            {canViewPendingApprovals && (
-              <Route path="/pending-approvals" element={<PendingApprovals />} />
-            )}
-            
-            {/* Pending Assessments - Only for Sector Expert */}
-            {canViewPendingAssessments && (
-              <Route path="/pending-assessments" element={<PendingAssessments />} />
-            )}
-            
-            {/* Admin only routes - Super Admin only */}
-            {isSuperAdmin && (
+            {/* User Management - Admin only */}
+            {(user?.is_superuser || userRole === 'super_admin') && (
               <Route path="/admin/users" element={<UserManagement />} />
             )}
             
-            {/* Catch all */}
+            {/* Common routes for all */}
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/settings" element={<Settings />} />
+            
+            {/* Redirect to dashboard on unknown routes */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>

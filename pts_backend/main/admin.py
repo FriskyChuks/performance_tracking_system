@@ -4,166 +4,50 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.utils import timezone
 from django.db.models import Count, Avg
-from django.contrib.admin import SimpleListFilter
-from . import models
+from .models import (
+    FederalPriorityArea,
+    Department,
+    Agency,
+    Deliverable,
+    Indicator,
+    ProjectActivity,
+    IndicatorQuarterlyProgress,
+    IndicatorAnnualSummary,
+    DeliverableAnnualReport,
+    FederalPriorityAreaAnnualReport
+)
 
-# ============== Custom Filters ==============
 
-class InitiativeTypeFilter(SimpleListFilter):
-    title = 'Initiative Type'
-    parameter_name = 'initiative_type'
+class BaseAdmin(admin.ModelAdmin):
+    """Base admin class with common functionality"""
+    save_on_top = True
+    readonly_fields = ('created_at', 'updated_at')
     
-    def lookups(self, request, model_admin):
-        return models.ProjectInitiative.INITIATIVE_TYPES
-    
-    def queryset(self, request, queryset):
-        if self.value():
-            return queryset.filter(initiative_type=self.value())
-        return queryset
+    def save_model(self, request, obj, form, change):
+        if not change:  # New object
+            if hasattr(obj, 'created_by') and not obj.created_by_id:
+                obj.created_by = request.user
+            if hasattr(obj, 'updated_by') and not obj.updated_by_id:
+                obj.updated_by = request.user
+        else:  # Existing object
+            if hasattr(obj, 'updated_by'):
+                obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
 
-class QuarterFilter(SimpleListFilter):
-    title = 'Quarter'
-    parameter_name = 'quarter'
-    
-    def lookups(self, request, model_admin):
-        return models.DeliverableQuarter.QUARTER_CHOICES
-    
-    def queryset(self, request, queryset):
-        if self.value():
-            return queryset.filter(quarter=self.value())
-        return queryset
 
-class PerformanceRatingFilter(SimpleListFilter):
-    title = 'Performance Rating'
-    parameter_name = 'performance_rating'
-    
-    def lookups(self, request, model_admin):
-        return [(1, 'Poor (1)'), (2, 'Fair (2)'), (3, 'Good (3)'), 
-                (4, 'Very Good (4)'), (5, 'Excellent (5)')]
-    
-    def queryset(self, request, queryset):
-        if self.value():
-            return queryset.filter(performance_rating=self.value())
-        return queryset
-
-# ============== Inline Admins ==============
-
-class DeliverableInline(admin.TabularInline):
-    model = models.Deliverable
-    extra = 1
-    fields = ['name', 'target_value', 'unit', 'deadline', 'is_achieved']
-    show_change_link = True
-
-class ProjectInitiativeHistoryInline(admin.TabularInline):
-    model = models.ProjectInitiativeHistory
-    extra = 0
-    fields = ['recorded_date', 'actual_value', 'progress_percentage', 'performance_rating', 'notes']
-    readonly_fields = ['recorded_date']
-    classes = ['collapse']
-
-class DeliverableQuarterInline(admin.TabularInline):
-    model = models.DeliverableQuarter
-    extra = 0
-    fields = ['deliverable', 'quarter', 'year', 'target_value', 'actual_value', 
-              'achievement_percentage', 'status']
-    readonly_fields = ['achievement_percentage']
-    classes = ['collapse']
-
-class InitiativeQuarterSummaryInline(admin.TabularInline):
-    model = models.InitiativeQuarterSummary
-    extra = 0
-    fields = ['year', 'annual_target', 'annual_actual', 'average_achievement', 
-              'overall_rating', 'is_complete']
-    readonly_fields = ['year', 'annual_target', 'annual_actual', 'average_achievement', 'overall_rating']
-    can_delete = False
-    classes = ['collapse']
-    show_change_link = True
-
-# ============== Model Admins ==============
-
-@admin.register(models.Department)
-class DepartmentAdmin(admin.ModelAdmin):
-    list_display = ['name', 'code', 'initiative_count', 'created_at']
-    list_filter = ['created_at']
-    search_fields = ['name', 'code', 'description']
-    readonly_fields = ['created_at', 'updated_at']
+@admin.register(FederalPriorityArea)
+class FederalPriorityAreaAdmin(BaseAdmin):
+    list_display = ('name', 'code', 'is_primary_for_ministry', 'order', 'created_at')
+    list_filter = ('is_primary_for_ministry', 'created_at')
+    search_fields = ('name', 'code', 'description')
+    list_editable = ('is_primary_for_ministry', 'order')
     fieldsets = (
         ('Basic Information', {
             'fields': ('name', 'description', 'code')
         }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def initiative_count(self, obj):
-        count = obj.initiatives.count()
-        url = reverse('admin:main_projectinitiative_changelist') + f'?department__id={obj.id}'
-        return format_html('<a href="{}">{} Initiatives</a>', url, count)
-    initiative_count.short_description = 'Initiatives'
-
-@admin.register(models.Agency)
-class AgencyAdmin(admin.ModelAdmin):
-    list_display = ['name', 'code', 'website', 'initiative_count', 'created_at']
-    list_filter = ['created_at']
-    search_fields = ['name', 'code', 'description', 'website']
-    readonly_fields = ['created_at', 'updated_at']
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('name', 'description', 'code', 'website')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def initiative_count(self, obj):
-        count = obj.initiatives.count()
-        url = reverse('admin:main_projectinitiative_changelist') + f'?agency__id={obj.id}'
-        return format_html('<a href="{}">{} Initiatives</a>', url, count)
-    initiative_count.short_description = 'Initiatives'
-
-@admin.register(models.PriorityArea)
-class PriorityAreaAdmin(admin.ModelAdmin):
-    list_display = ['name', 'order', 'icon', 'color', 'deliverable_count', 'initiative_count']
-    list_editable = ['order']
-    list_filter = ['created_at']
-    search_fields = ['name', 'description']
-    readonly_fields = ['created_at', 'updated_at']
-    inlines = [DeliverableInline]
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('name', 'description', 'icon', 'color', 'order')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def deliverable_count(self, obj):
-        return obj.deliverables.count()
-    deliverable_count.short_description = 'Deliverables'
-    
-    def initiative_count(self, obj):
-        return obj.initiatives.count()
-    initiative_count.short_description = 'Initiatives'
-
-@admin.register(models.Deliverable)
-class DeliverableAdmin(admin.ModelAdmin):
-    list_display = ['name', 'priority_area', 'target_value', 'unit', 'deadline', 'is_achieved']
-    list_filter = ['priority_area', 'is_achieved', 'deadline']
-    search_fields = ['name', 'description', 'priority_area__name']
-    list_editable = ['is_achieved']
-    readonly_fields = ['created_at', 'updated_at']
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('priority_area', 'name', 'description')
-        }),
-        ('Target Information', {
-            'fields': ('target_value', 'unit', 'deadline', 'is_achieved')
+        ('Ministry Focus', {
+            'fields': ('is_primary_for_ministry', 'order'),
+            'description': 'Indicate if this is one of the 3 primary focus areas for the Ministry'
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -171,269 +55,384 @@ class DeliverableAdmin(admin.ModelAdmin):
         }),
     )
 
-@admin.register(models.ProjectInitiative)
-class ProjectInitiativeAdmin(admin.ModelAdmin):
-    list_display = ['title', 'display_type', 'department', 'agency', 'status', 
-                   'progress_percentage_display', 'performance_rating_display', 
-                   'completion_percentage_display', 'start_date', 'end_date']
-    list_filter = [InitiativeTypeFilter, 'status', PerformanceRatingFilter, 
-                  'department', 'agency', 'priority_area', 'start_date']
-    search_fields = ['title', 'code', 'description', 'location_address']
-    readonly_fields = ['created_at', 'updated_at', 'progress_percentage', 'completion_percentage']
-    list_editable = ['status']
-    list_per_page = 25
-    date_hierarchy = 'start_date'
-    inlines = [ProjectInitiativeHistoryInline, DeliverableQuarterInline, InitiativeQuarterSummaryInline]
-    actions = ['recalculate_progress', 'mark_as_completed', 'export_as_csv']
+
+@admin.register(Department)
+class DepartmentAdmin(BaseAdmin):
+    list_display = ('name', 'code', 'activity_count', 'created_at')
+    search_fields = ('name', 'code', 'description')
+    readonly_fields = ('created_at', 'updated_at', 'activity_count')
+    
+    def activity_count(self, obj):
+        count = obj.activities.count()
+        url = reverse('admin:main_projectactivity_changelist') + f'?department__id__exact={obj.id}'
+        return format_html('<a href="{}">{} activities</a>', url, count)
+    activity_count.short_description = 'Activities'
+
+
+@admin.register(Agency)
+class AgencyAdmin(BaseAdmin):
+    list_display = ('name', 'code', 'website', 'activity_count', 'created_at')
+    search_fields = ('name', 'code', 'description', 'website')
+    list_filter = ('created_at',)
+    
+    def activity_count(self, obj):
+        count = obj.activities.count()
+        url = reverse('admin:main_projectactivity_changelist') + f'?agency__id__exact={obj.id}'
+        return format_html('<a href="{}">{} activities</a>', url, count)
+    activity_count.short_description = 'Activities'
+
+
+class IndicatorInline(admin.TabularInline):
+    model = Indicator
+    extra = 1
+    fields = ('name', 'measurement_type', 'target_value', 'target_year', 'order')
+    show_change_link = True
+
+
+@admin.register(Deliverable)
+class DeliverableAdmin(BaseAdmin):
+    list_display = ('name', 'federal_priority_area', 'code', 'indicator_count', 'created_at')
+    list_filter = ('federal_priority_area', 'created_at')
+    search_fields = ('name', 'code', 'description')
+    inlines = [IndicatorInline]
+    
+    def indicator_count(self, obj):
+        return obj.indicators.count()
+    indicator_count.short_description = '# Indicators'
+
+
+@admin.register(Indicator)
+class IndicatorAdmin(BaseAdmin):
+    list_display = ('name', 'deliverable', 'measurement_type', 'target_value', 'target_year', 'order')
+    list_filter = ('measurement_type', 'target_year', 'is_cumulative', 'deliverable__federal_priority_area')
+    search_fields = ('name', 'description', 'deliverable__name')
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('deliverable', 'name', 'description', 'measurement_type', 'unit', 'order')
+        }),
+        ('Baseline and Targets', {
+            'fields': ('baseline_value', 'baseline_year', 'target_value', 'target_year', 'target_boolean')
+        }),
+        ('Quarterly Targets', {
+            'fields': ('q1_target', 'q2_target', 'q3_target', 'q4_target'),
+            'classes': ('collapse',),
+            'description': 'Optional: Set specific targets for each quarter'
+        }),
+        ('Tracking Settings', {
+            'fields': ('is_cumulative',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+class QuarterlyProgressInline(admin.TabularInline):
+    model = IndicatorQuarterlyProgress
+    extra = 0
+    fields = ('quarter', 'year', 'actual_value', 'cumulative_percentage', 'status', 'auto_rating')
+    readonly_fields = ('cumulative_percentage', 'auto_rating', 'created_at', 'updated_at')
+    show_change_link = True
+    can_delete = False
+    
+    def has_add_permission(self, request, obj=None):
+        return False  # Use the action to create quarterly progress
+
+
+@admin.register(ProjectActivity)
+class ProjectActivityAdmin(BaseAdmin):
+    list_display = ('title', 'activity_type', 'department', 'agency', 'status', 
+                   'start_date', 'end_date', 'completion_percentage_display', 
+                   'overall_performance', 'quarterly_progress_status')
+    list_filter = ('activity_type', 'status', 'funding_source', 'department', 'agency', 
+                  'start_date', 'end_date')
+    search_fields = ('title', 'code', 'description', 'location_address')
+    filter_horizontal = ('indicators',)
+    readonly_fields = ('created_at', 'updated_at', 'created_by', 'updated_by', 
+                      'completion_percentage_display', 'overall_performance')
+    actions = ['create_quarterly_progress_for_all', 'mark_as_ongoing', 'mark_as_completed']
     
     fieldsets = (
-        ('Type & Classification', {
-            'fields': ('initiative_type', 'department', 'agency', 'priority_area', 'code')
+        ('Activity Information', {
+            'fields': ('activity_type', 'title', 'description', 'code')
         }),
-        ('Basic Information', {
-            'fields': ('title', 'description')
+        ('Organizational Assignment', {
+            'fields': ('department', 'agency')
         }),
-        ('Project Information (if Project)', {
+        ('Indicators', {
+            'fields': ('indicators',),
+            'description': 'Select which indicators this activity measures'
+        }),
+        ('Financial Information (for Projects)', {
             'fields': ('funding_source', 'budget'),
             'classes': ('collapse',)
         }),
-        ('Program Information (if Program)', {
+        ('Program Details (for Programs)', {
             'fields': ('program_goal',),
             'classes': ('collapse',)
         }),
-        ('Location Information', {
+        ('Location', {
             'fields': ('latitude', 'longitude', 'location_address', 'location_description'),
-            'classes': ('wide',)
+            'classes': ('collapse',)
         }),
         ('Timeline', {
-            'fields': ('start_date', 'end_date')
+            'fields': ('start_date', 'end_date', 'status')
         }),
-        ('Performance Metrics', {
-            'fields': ('target_value', 'actual_value', 'unit_of_measure', 
-                      'progress_percentage', 'completion_percentage', 
-                      'performance_rating', 'performance_comment')
+        ('Performance', {
+            'fields': ('completion_percentage_display', 'overall_performance'),
+            'classes': ('collapse',)
         }),
-        ('Tracking Information', {
-            'fields': ('status', 'created_by', 'updated_by', 'created_at', 'updated_at'),
+        ('Tracking', {
+            'fields': ('created_by', 'updated_by', 'created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
     
-    def progress_percentage_display(self, obj):
-        if obj.progress_percentage:
-            return format_html('<b>{}%</b>', obj.progress_percentage)
-        return '0%'
-    progress_percentage_display.short_description = 'Progress'
-    
-    def performance_rating_display(self, obj):
-        if obj.performance_rating:
-            stars = '★' * obj.performance_rating + '☆' * (5 - obj.performance_rating)
-            return format_html('<span style="color: #f5b042;">{}</span> ({})', stars, obj.performance_rating)
-        return '-'
-    performance_rating_display.short_description = 'Rating'
-    
-    def completion_percentage_display(self, obj):
-        if obj.completion_percentage:
-            return format_html('<b>{}%</b>', obj.completion_percentage)
-        return '0%'
-    completion_percentage_display.short_description = 'Timeline Completion'
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'department', 'agency', 'priority_area', 'created_by', 'updated_by'
-        )
-    
     def save_model(self, request, obj, form, change):
-        if not obj.pk:
+        if not change:
             obj.created_by = request.user
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
     
-    def recalculate_progress(self, request, queryset):
-        for initiative in queryset:
-            # Recalculate based on actual_value vs target_value
-            if initiative.target_value and initiative.target_value > 0:
-                if initiative.actual_value:
-                    initiative.progress_percentage = (initiative.actual_value / initiative.target_value) * 100
-                else:
-                    initiative.progress_percentage = 0
-                initiative.save()
-        self.message_user(request, f"Progress recalculated for {queryset.count()} initiatives")
-    recalculate_progress.short_description = "Recalculate progress percentage"
+    def completion_percentage_display(self, obj):
+        percentage = obj.completion_percentage
+        color = 'green' if percentage >= 75 else 'orange' if percentage >= 50 else 'red'
+        return format_html('<span style="color: {}; font-weight: bold;">{}%</span>', color, percentage)
+    completion_percentage_display.short_description = 'Timeline Completion'
+    
+    def overall_performance(self, obj):
+        performance = obj.overall_annual_performance
+        if performance >= 90:
+            color = 'green'
+        elif performance >= 75:
+            color = 'orange'
+        else:
+            color = 'red'
+        return format_html('<span style="color: {}; font-weight: bold;">{}%</span>', color, performance)
+    overall_performance.short_description = 'Annual Performance'
+    
+    def quarterly_progress_status(self, obj):
+        """Show quarterly progress submission status"""
+        current_year = timezone.now().year
+        current_quarter = (timezone.now().month - 1) // 3 + 1
+        progress = IndicatorQuarterlyProgress.objects.filter(
+            activity=obj,
+            year=current_year,
+            quarter=current_quarter
+        )
+        if progress.exists():
+            statuses = progress.values_list('status', flat=True)
+            if 'draft' in statuses:
+                return format_html('<span style="color: orange;">⚠️ Draft</span>')
+            elif 'submitted' in statuses:
+                return format_html('<span style="color: blue;">📤 Submitted</span>')
+            elif 'approved' in statuses:
+                return format_html('<span style="color: green;">✅ Approved</span>')
+        return format_html('<span style="color: gray;">❌ Not Started</span>')
+    quarterly_progress_status.short_description = 'Q{} {} Status'.format(
+        (timezone.now().month - 1) // 3 + 1, timezone.now().year
+    )
+    
+    def create_quarterly_progress_for_all(self, request, queryset):
+        """Admin action to create quarterly progress records"""
+        year = timezone.now().year
+        count = 0
+        for activity in queryset:
+            activity.create_quarterly_progress(year=year)
+            count += 1
+        self.message_user(request, f'Created quarterly progress for {count} activities for {year}')
+    create_quarterly_progress_for_all.short_description = 'Create quarterly progress records for selected activities'
+    
+    def mark_as_ongoing(self, request, queryset):
+        count = queryset.update(status='ongoing')
+        self.message_user(request, f'Marked {count} activities as ongoing')
+    mark_as_ongoing.short_description = 'Mark selected activities as Ongoing'
     
     def mark_as_completed(self, request, queryset):
-        updated = queryset.update(status='completed')
-        self.message_user(request, f"{updated} initiative(s) marked as completed")
-    mark_as_completed.short_description = "Mark selected initiatives as completed"
-    
-    def export_as_csv(self, request, queryset):
-        import csv
-        from django.http import HttpResponse
-        
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="initiatives_export.csv"'
-        
-        writer = csv.writer(response)
-        writer.writerow(['Title', 'Type', 'Department', 'Agency', 'Status', 
-                        'Progress %', 'Performance Rating', 'Start Date', 'End Date', 'Budget'])
-        
-        for initiative in queryset:
-            writer.writerow([
-                initiative.title,
-                initiative.display_type,
-                initiative.department.name if initiative.department else '',
-                initiative.agency.name if initiative.agency else '',
-                initiative.status,
-                initiative.progress_percentage,
-                initiative.performance_rating or '',
-                initiative.start_date,
-                initiative.end_date or '',
-                initiative.budget or '',
-            ])
-        
-        return response
-    export_as_csv.short_description = "Export selected initiatives to CSV"
+        count = queryset.update(status='completed')
+        self.message_user(request, f'Marked {count} activities as completed')
+    mark_as_completed.short_description = 'Mark selected activities as Completed'
 
-@admin.register(models.ProjectInitiativeHistory)
-class ProjectInitiativeHistoryAdmin(admin.ModelAdmin):
-    list_display = ['initiative', 'recorded_date', 'actual_value', 'progress_percentage', 
-                   'performance_rating']
-    list_filter = ['recorded_date', 'performance_rating']
-    search_fields = ['initiative__title', 'notes']
-    readonly_fields = ['recorded_date']
-    date_hierarchy = 'recorded_date'
+
+@admin.register(IndicatorQuarterlyProgress)
+class IndicatorQuarterlyProgressAdmin(BaseAdmin):
+    list_display = ('activity', 'indicator', 'quarter', 'year', 'actual_value', 
+                   'cumulative_percentage', 'auto_rating', 'status', 'expert_assessed')
+    list_filter = ('quarter', 'year', 'status', 'expert_assessed', 'data_accuracy')
+    search_fields = ('activity__title', 'indicator__name', 'staff_comment', 
+                    'expert_comment')
+    readonly_fields = ('cumulative_actual', 'cumulative_percentage', 'auto_rating', 
+                      'created_at', 'updated_at')
+    raw_id_fields = ('activity', 'indicator', 'approved_by', 'expert_assessed_by', 'updated_by')
     
     fieldsets = (
-        ('Initiative', {
-            'fields': ('initiative',)
+        ('Progress Information', {
+            'fields': ('activity', 'indicator', 'quarter', 'year', 'quarterly_target')
         }),
-        ('Performance Data', {
-            'fields': ('actual_value', 'progress_percentage', 'performance_rating', 'notes')
+        ('Actual Achievement', {
+            'fields': ('actual_value', 'actual_boolean')
         }),
-        ('Timestamp', {
-            'fields': ('recorded_date',),
+        ('Automated Calculations', {
+            'fields': ('cumulative_actual', 'cumulative_percentage', 'auto_rating'),
             'classes': ('collapse',)
         }),
-    )
-
-@admin.register(models.DeliverableQuarter)
-class DeliverableQuarterAdmin(admin.ModelAdmin):
-    list_display = ['initiative', 'deliverable', 'year', 'quarter_display', 
-                   'target_value', 'actual_value', 'achievement_percentage_display', 'status']
-    list_filter = [QuarterFilter, 'year', 'status', 'initiative__department']
-    search_fields = ['initiative__title', 'deliverable__name', 'staff_comment']
-    list_editable = ['status']
-    readonly_fields = ['achievement_percentage', 'created_at', 'updated_at']
-    raw_id_fields = ['initiative', 'deliverable', 'approved_by', 'updated_by']
-    list_select_related = ['initiative', 'deliverable']
-    
-    fieldsets = (
-        ('Quarter Information', {
-            'fields': ('initiative', 'deliverable', 'quarter', 'year')
-        }),
-        ('Performance Data', {
-            'fields': ('target_value', 'actual_value', 'baseline_value', 'unit_of_measure', 
-                      'achievement_percentage')
-        }),
-        ('Status & Comments', {
-            'fields': ('status', 'staff_comment', 'progress_images')
-        }),
-        ('Approval Information', {
-            'fields': ('submitted_at', 'approved_at', 'approved_by'),
-            'classes': ('collapse',)
-        }),
-        ('Tracking', {
-            'fields': ('updated_by', 'created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def quarter_display(self, obj):
-        return f"Q{obj.quarter}"
-    quarter_display.short_description = 'Quarter'
-    
-    def achievement_percentage_display(self, obj):
-        if obj.achievement_percentage:
-            if obj.achievement_percentage >= 100:
-                color = 'green'
-            elif obj.achievement_percentage >= 75:
-                color = 'blue'
-            elif obj.achievement_percentage >= 50:
-                color = 'orange'
-            else:
-                color = 'red'
-            return format_html('<span style="color: {}; font-weight: bold;">{}%</span>', 
-                             color, obj.achievement_percentage)
-        return '0%'
-    achievement_percentage_display.short_description = 'Achievement'
-    
-    def save_model(self, request, obj, form, change):
-        if not obj.pk:
-            obj.updated_by = request.user
-        else:
-            obj.updated_by = request.user
-        super().save_model(request, obj, form, change)
-
-@admin.register(models.InitiativeAssessment)
-class InitiativeAssessmentAdmin(admin.ModelAdmin):
-    list_display = ['initiative', 'data_accuracy', 'effort_percentage', 
-                   'expert_rating_display', 'assessed_by', 'assessed_at']
-    list_filter = ['data_accuracy', 'expert_rating', 'assessed_at']
-    search_fields = ['initiative__title', 'expert_comment', 'recommendations']
-    readonly_fields = ['assessed_at']
-    raw_id_fields = ['initiative', 'assessed_by']
-    
-    fieldsets = (
-        ('Initiative', {
-            'fields': ('initiative',)
+        ('Status and Review', {
+            'fields': ('status', 'submitted_at', 'approved_at', 'approved_by', 
+                      'staff_comment', 'updated_by')
         }),
         ('Expert Assessment', {
-            'fields': ('data_accuracy', 'effort_percentage', 'expert_comment', 'expert_rating')
+            'fields': ('expert_assessed', 'expert_assessed_at', 'expert_assessed_by',
+                      'expert_rating', 'expert_comment', 'expert_recommendations',
+                      'data_accuracy', 'effort_percentage'),
+            'classes': ('collapse',)
         }),
-        ('Recommendations', {
-            'fields': ('recommendations',)
+        ('Supporting Materials', {
+            'fields': ('progress_images', 'supporting_documents'),
+            'classes': ('collapse',)
         }),
-        ('Assessment Information', {
-            'fields': ('assessed_by', 'assessed_at'),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
     
-    def expert_rating_display(self, obj):
-        stars = '★' * obj.expert_rating + '☆' * (5 - obj.expert_rating)
-        return format_html('<span style="color: #f5b042;">{}</span>', stars)
-    expert_rating_display.short_description = 'Expert Rating'
+    actions = ['approve_selected', 'submit_for_review', 'mark_as_expert_assessed']
+    
+    def approve_selected(self, request, queryset):
+        count = queryset.update(status='approved', approved_at=timezone.now(), approved_by=request.user)
+        self.message_user(request, f'Approved {count} progress records')
+    approve_selected.short_description = 'Approve selected progress records'
+    
+    def submit_for_review(self, request, queryset):
+        count = queryset.update(status='submitted', submitted_at=timezone.now())
+        self.message_user(request, f'Submitted {count} progress records for review')
+    submit_for_review.short_description = 'Submit selected records for review'
+    
+    def mark_as_expert_assessed(self, request, queryset):
+        count = queryset.update(expert_assessed=True, expert_assessed_at=timezone.now(), 
+                               expert_assessed_by=request.user)
+        self.message_user(request, f'Marked {count} records as expert assessed')
+    mark_as_expert_assessed.short_description = 'Mark selected as Expert Assessed'
 
-@admin.register(models.InitiativeQuarterSummary)
-class InitiativeQuarterSummaryAdmin(admin.ModelAdmin):
-    list_display = ['initiative', 'year', 'annual_target', 'annual_actual', 
-                   'average_achievement', 'overall_rating', 'is_complete']
-    list_filter = ['year', 'is_complete']
-    search_fields = ['initiative__title']
-    readonly_fields = ['year', 'annual_target', 'annual_actual', 'average_achievement', 
-                      'overall_rating', 'completed_at']
-    raw_id_fields = ['initiative']
-    list_editable = ['is_complete']
+
+@admin.register(IndicatorAnnualSummary)
+class IndicatorAnnualSummaryAdmin(BaseAdmin):
+    list_display = ('indicator', 'activity', 'year', 'year_end_percentage', 
+                   'overall_rating', 'is_complete')
+    list_filter = ('year', 'is_complete')
+    search_fields = ('indicator__name', 'activity__title')
+    readonly_fields = ('annual_target', 'annual_actual', 'q1_achievement', 'q2_achievement',
+                      'q3_achievement', 'q4_achievement', 'average_quarterly_achievement',
+                      'year_end_percentage', 'auto_rating', 'overall_rating')
     
     fieldsets = (
         ('Summary Information', {
-            'fields': ('initiative', 'year')
+            'fields': ('indicator', 'activity', 'year')
         }),
-        ('Performance Summary', {
-            'fields': ('annual_target', 'annual_actual', 'average_achievement', 'overall_rating')
+        ('Annual Performance', {
+            'fields': ('annual_target', 'annual_actual', 'year_end_percentage')
         }),
-        ('Completion Status', {
-            'fields': ('is_complete', 'completed_at'),
+        ('Quarterly Breakdown', {
+            'fields': ('q1_achievement', 'q2_achievement', 'q3_achievement', 'q4_achievement',
+                      'average_quarterly_achievement')
+        }),
+        ('Ratings', {
+            'fields': ('auto_rating', 'expert_rating', 'overall_rating')
+        }),
+        ('Expert Assessment', {
+            'fields': ('expert_annual_comment', 'expert_annual_recommendations')
+        }),
+        ('Status', {
+            'fields': ('is_complete', 'completed_at')
+        }),
+    )
+    
+    actions = ['mark_as_complete']
+    
+    def mark_as_complete(self, request, queryset):
+        count = queryset.update(is_complete=True, completed_at=timezone.now())
+        self.message_user(request, f'Marked {count} annual summaries as complete')
+    mark_as_complete.short_description = 'Mark selected summaries as Complete'
+
+
+@admin.register(DeliverableAnnualReport)
+class DeliverableAnnualReportAdmin(BaseAdmin):
+    list_display = ('deliverable', 'year', 'average_achievement', 'overall_rating', 
+                   'is_finalized')
+    list_filter = ('year', 'is_finalized')
+    search_fields = ('deliverable__name', 'summary', 'challenges')
+    readonly_fields = ('created_at', 'updated_at', 'finalized_at')
+    
+    fieldsets = (
+        ('Report Information', {
+            'fields': ('deliverable', 'year')
+        }),
+        ('Performance Metrics', {
+            'fields': ('total_indicators', 'completed_indicators', 
+                      'average_achievement', 'overall_rating')
+        }),
+        ('Federal Reporting', {
+            'fields': ('federal_priority_area_contribution',)
+        }),
+        ('Narrative', {
+            'fields': ('summary', 'challenges', 'recommendations', 'next_year_priorities')
+        }),
+        ('Finalization', {
+            'fields': ('is_finalized', 'finalized_at', 'finalized_by')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
     
-    def has_add_permission(self, request):
-        # These should be auto-generated, not manually added
-        return False
+    actions = ['finalize_reports']
+    
+    def finalize_reports(self, request, queryset):
+        count = queryset.update(is_finalized=True, finalized_at=timezone.now(), finalized_by=request.user)
+        self.message_user(request, f'Finalized {count} reports')
+    finalize_reports.short_description = 'Finalize selected reports'
 
-# ============== Admin Site Customization ==============
 
-admin.site.site_header = 'Environmental Performance Dashboard Admin'
-admin.site.site_title = 'EPD Admin Portal'
-admin.site.index_title = 'Welcome to Environmental Performance Dashboard'
+@admin.register(FederalPriorityAreaAnnualReport)
+class FederalPriorityAreaAnnualReportAdmin(BaseAdmin):
+    list_display = ('federal_priority_area', 'year', 'average_achievement', 
+                   'overall_rating', 'is_submitted_to_fg')
+    list_filter = ('year', 'is_submitted_to_fg')
+    search_fields = ('federal_priority_area__name', 'ministry_contribution', 
+                    'key_achievements')
+    readonly_fields = ('created_at', 'updated_at', 'submitted_to_fg_at')
+    
+    fieldsets = (
+        ('Report Information', {
+            'fields': ('federal_priority_area', 'year')
+        }),
+        ('Performance Metrics', {
+            'fields': ('total_deliverables', 'total_indicators', 
+                      'average_achievement', 'overall_rating')
+        }),
+        ('Ministry Contribution Narrative', {
+            'fields': ('ministry_contribution', 'key_achievements', 'challenges_and_gaps')
+        }),
+        ('Federal Government Submission', {
+            'fields': ('is_submitted_to_fg', 'submitted_to_fg_at')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['submit_to_federal_government']
+    
+    def submit_to_federal_government(self, request, queryset):
+        count = queryset.update(is_submitted_to_fg=True, submitted_to_fg_at=timezone.now())
+        self.message_user(request, f'Submitted {count} reports to Federal Government')
+    submit_to_federal_government.short_description = 'Submit to Federal Government'
+
+
+# Optional: Custom admin site header
+admin.site.site_header = 'Ministry Performance Management System'
+admin.site.site_title = 'Performance Dashboard'
+admin.site.index_title = 'Welcome to Performance Management System'

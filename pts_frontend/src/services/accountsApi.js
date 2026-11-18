@@ -1,25 +1,11 @@
-// src/services/accountsApi.js
+// services/accountsApi.js
 import api from './api';
-import { publicClient } from './api';
 
-export const accountsApi = {
-  // ==================== Authentication ====================
+const accountsApi = {
+  // Authentication
   login: async (email, password) => {
-    try {
-      const response = await api.post('/accounts/auth/jwt/create/', { email, password });
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
-  },
-  
-  register: async (userData) => {
-    try {
-      const response = await api.post('/accounts/register/', userData);
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
+    const response = await api.post('/auth/login/', { email, password });
+    return response.data;
   },
   
   logout: () => {
@@ -28,65 +14,48 @@ export const accountsApi = {
     localStorage.removeItem('user_data');
   },
   
+  register: async (userData) => {
+    const response = await api.post('/auth/register/', userData);
+    return response.data;
+  },
+  
   getCurrentUser: async () => {
-    try {
-      const response = await api.get('/accounts/me/');
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
+    const response = await api.get('/auth/profile/');
+    return response.data;
   },
   
-  getUserInfo: async () => {
-    try {
-      const response = await api.get('/main/user/info/');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching user info:', error);
-      // Return a default structure instead of throwing
-      return { role: 'public', permissions: {} };
-    }
+  updateProfile: async (userData) => {
+    const response = await api.patch('/auth/profile/', userData);
+    return response.data;
   },
   
-  updateProfile: async (profileData) => {
-    try {
-      const response = await api.patch('/accounts/profile/', profileData);
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
+  changePassword: async (oldPassword, newPassword, confirmPassword) => {
+    const response = await api.post('/auth/change-password/', {
+      old_password: oldPassword,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    });
+    return response.data;
   },
   
-  changePassword: async (passwordData) => {
-    try {
-      const response = await api.post('/accounts/change-password/', passwordData);
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
+  // User Management (Admin only)
+  getAllUsers: async () => {
+    const response = await api.get('/auth/users/');
+    return response.data;
   },
   
-  // ==================== User Management (Admin) ====================
-  getAllUsers: () => api.get('/accounts/admin/users/'),
-  getPendingUsers: () => api.get('/accounts/admin/users/pending/'),
-  getUserDetail: (userId) => api.get(`/accounts/admin/users/${userId}/`),
-  upgradeUser: (userId, data) => api.put(`/accounts/admin/users/${userId}/upgrade/`, data),
-  assignUserGroup: (data) => api.post('/accounts/admin/users/assign-group/', data),
+  // IMPORTANT: Use the /update/ endpoint, NOT /role/
+  updateUserRole: async (userId, updateData) => {
+    // Change this line to use /update/ instead of /role/
+    const response = await api.patch(`/auth/users/${userId}/update/`, updateData);
+    return response.data;
+  },
   
-  // Groups
-  getGroups: () => api.get('/accounts/admin/groups/'),
-  
-  // User Status
-  getCurrentUserStatus: () => api.get('/accounts/user/status/'),
-  
-  // ==================== Activities ====================
-  getUserActivities: (limit = 50) => api.get(`/accounts/activities/?limit=${limit}`),
-  getAllActivities: (limit = 100) => api.get(`/accounts/activities/all/?limit=${limit}`),
-  logActivity: (data) => api.post('/accounts/activities/log/', data),
-  
-  // ==================== Bulk Operations ====================
-  bulkUpgradeUsers: (userIds, data) => api.post('/accounts/admin/users/bulk-upgrade/', { user_ids: userIds, ...data }),
-  bulkDeleteUsers: (userIds) => api.post('/accounts/admin/users/bulk-delete/', { user_ids: userIds }),
+  // Activity Logs (Admin only)
+  getActivityLogs: async (params = {}) => {
+    const response = await api.get('/auth/activity-logs/', { params });
+    return response.data;
+  },
 };
 
 export default accountsApi;

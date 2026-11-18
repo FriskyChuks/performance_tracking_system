@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   User, Mail, Lock, Bell, Shield, Activity, Save, Edit2, Eye, EyeOff, 
   LogOut, Phone, Building, Briefcase, Key, ShieldCheck, ChevronRight, 
-  RefreshCw, Landmark, Target, Clock
+  RefreshCw, Landmark, Target, Clock, Award
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import accountsApi from '../services/accountsApi';
@@ -13,7 +13,7 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 
 const Settings = () => {
-  const { user, logout, updateUser, refreshUser } = useAuth();
+  const { user, userRole, logout, updateUser, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ const Settings = () => {
   });
   
   const [passwordForm, setPasswordForm] = useState({ 
-    current_password: '', new_password: '', confirm_password: '' 
+    old_password: '', new_password: '', confirm_password: '' 
   });
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -37,7 +37,7 @@ const Settings = () => {
   
   const [notifications, setNotifications] = useState({
     email_notifications: true, 
-    initiative_updates: true, 
+    activity_updates: true, 
     performance_alerts: true,
     weekly_summary: false, 
     monthly_report: true, 
@@ -63,27 +63,27 @@ const Settings = () => {
         position: user.position || ''
       });
     }
-    fetchActivities();
+    fetchActivityLogs();
   }, [user]);
 
   const fetchDropdownData = async () => {
     try {
-      const [deptRes, agencyRes] = await Promise.all([
-        mainApi.departments.list(),
-        mainApi.agencies.list()
+      const [departments, agencies] = await Promise.all([
+        mainApi.getPublicDepartments(),
+        mainApi.getPublicAgencies()
       ]);
-      setDepartmentsList(deptRes.data);
-      setAgenciesList(agencyRes.data);
+      setDepartmentsList(departments || []);
+      setAgenciesList(agencies || []);
     } catch (error) {
       console.error('Error fetching dropdown data:', error);
     }
   };
 
-  const fetchActivities = async () => {
+  const fetchActivityLogs = async () => {
     setActivityLoading(true);
     try {
-      const response = await accountsApi.getUserActivities(20);
-      setActivityLog(response.data);
+      const response = await accountsApi.getActivityLogs({ limit: 50 });
+      setActivityLog(response || []);
     } catch (error) { 
       console.error('Error fetching activities:', error); 
       setActivityLog([]); 
@@ -94,10 +94,12 @@ const Settings = () => {
 
   const getActionIcon = (action) => {
     const icons = { 
-      'login': '🔐', 'logout': '🚪', 'create': '➕', 'update': '✏️', 
-      'delete': '🗑️', 'view': '👁️', 'export': '📥', 'change_password': '🔒', 
-      'update_profile': '👤', 'initiative_created': '📋', 'initiative_updated': '📝',
-      'initiative_deleted': '🗑️', 'user_upgraded': '⬆️', 'role_assigned': '🎭'
+      'login': '🔐', 'logout': '🚪', 'create': '➕', 'activity_created': '📋',
+      'update': '✏️', 'activity_updated': '📝', 'delete': '🗑️', 'activity_deleted': '🗑️',
+      'view': '👁️', 'export': '📥', 'change_password': '🔒', 'update_profile': '👤',
+      'progress_recorded': '📊', 'quarterly_progress_submitted': '📤', 
+      'quarterly_progress_approved': '✅', 'expert_assessment_completed': '🏆',
+      'user_upgraded': '⬆️', 'role_assigned': '🎭', 'generate_report': '📈'
     };
     return icons[action] || '📌';
   };
@@ -107,13 +109,15 @@ const Settings = () => {
       'login': 'bg-green-100 text-green-600', 
       'logout': 'bg-gray-100 text-gray-600',
       'create': 'bg-blue-100 text-blue-600', 
+      'activity_created': 'bg-emerald-100 text-emerald-600',
       'update': 'bg-yellow-100 text-yellow-600',
-      'delete': 'bg-red-100 text-red-600', 
+      'activity_updated': 'bg-amber-100 text-amber-600',
+      'delete': 'bg-red-100 text-red-600',
       'change_password': 'bg-orange-100 text-orange-600',
       'update_profile': 'bg-cyan-100 text-cyan-600',
-      'initiative_created': 'bg-emerald-100 text-emerald-600',
-      'initiative_updated': 'bg-amber-100 text-amber-600',
-      'user_upgraded': 'bg-purple-100 text-purple-600'
+      'quarterly_progress_submitted': 'bg-purple-100 text-purple-600',
+      'quarterly_progress_approved': 'bg-green-100 text-green-600',
+      'expert_assessment_completed': 'bg-indigo-100 text-indigo-600'
     };
     return colors[action] || 'bg-gray-100 text-gray-600';
   };
@@ -138,25 +142,21 @@ const Settings = () => {
         last_name: profileForm.last_name,
         phone: profileForm.phone,
         position: profileForm.position,
-        department_id: profileForm.department || null,
-        agency_id: profileForm.agency || null
+        assigned_department: profileForm.department || null,
+        assigned_agency: profileForm.agency || null
       };
       
       const response = await accountsApi.updateProfile(updateData);
       toast.success('Profile updated successfully');
       setEditMode(false);
       
-      if (updateUser && response.data) {
-        updateUser(response.data);
+      if (updateUser && response) {
+        updateUser(response);
       } else {
         await refreshUser();
       }
       
-      await accountsApi.logActivity({ 
-        action: 'update_profile', 
-        description: 'Updated profile information' 
-      });
-      fetchActivities();
+      fetchActivityLogs();
     } catch (error) { 
       console.error('Update error:', error);
       toast.error(error.response?.data?.message || 'Failed to update profile');
@@ -167,7 +167,7 @@ const Settings = () => {
 
   const validatePassword = () => {
     const errors = {};
-    if (!passwordForm.current_password) errors.current_password = 'Current password required';
+    if (!passwordForm.old_password) errors.old_password = 'Current password required';
     if (!passwordForm.new_password) errors.new_password = 'New password required';
     else if (passwordForm.new_password.length < 6) errors.new_password = 'Minimum 6 characters';
     if (passwordForm.new_password !== passwordForm.confirm_password) errors.confirm_password = 'Passwords do not match';
@@ -180,15 +180,15 @@ const Settings = () => {
     if (!validatePassword()) return;
     setLoading(true);
     try {
-      await accountsApi.changePassword(passwordForm);
+      await accountsApi.changePassword(
+        passwordForm.old_password,
+        passwordForm.new_password,
+        passwordForm.confirm_password
+      );
       toast.success('Password changed successfully');
-      setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
+      setPasswordForm({ old_password: '', new_password: '', confirm_password: '' });
       setPasswordErrors({});
-      await accountsApi.logActivity({ 
-        action: 'change_password', 
-        description: 'Changed account password' 
-      });
-      fetchActivities();
+      fetchActivityLogs();
     } catch (error) { 
       toast.error(error.response?.data?.message || 'Failed to change password');
     } finally { 
@@ -199,17 +199,9 @@ const Settings = () => {
   const handleNotificationUpdate = async (key, value) => {
     setNotifications(prev => ({ ...prev, [key]: value }));
     toast.success(`${key.replace(/_/g, ' ')} preference updated`);
-    await accountsApi.logActivity({ 
-      action: 'update_profile', 
-      description: `Updated notification: ${key}` 
-    });
   };
 
   const handleLogout = async () => {
-    await accountsApi.logActivity({ 
-      action: 'logout', 
-      description: 'Logged out of account' 
-    });
     logout();
     navigate('/login');
   };
@@ -232,6 +224,17 @@ const Settings = () => {
     }
   };
 
+  const getRoleDisplayName = () => {
+    const roles = {
+      project_admin: 'Project Admin',
+      delivery_officer: 'Delivery Officer',
+      director: 'Director',
+      sector_expert: 'Sector Expert',
+      public_user: 'Public User'
+    };
+    return roles[userRole] || 'Staff';
+  };
+
   const tabs = [
     { id: 'profile', label: 'Profile', icon: User },
     { id: 'security', label: 'Security', icon: Shield },
@@ -248,11 +251,22 @@ const Settings = () => {
             <h1 className="text-xl font-bold text-gray-900">Settings</h1>
             <p className="text-xs text-gray-500 mt-0.5">Manage your account preferences</p>
           </div>
-          {activeTab === 'activity' && (
-            <button onClick={fetchActivities} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition">
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+              userRole === 'project_admin' ? 'bg-blue-100 text-blue-700' :
+              userRole === 'delivery_officer' ? 'bg-green-100 text-green-700' :
+              userRole === 'director' ? 'bg-purple-100 text-purple-700' :
+              userRole === 'sector_expert' ? 'bg-orange-100 text-orange-700' :
+              'bg-gray-100 text-gray-700'
+            }`}>
+              {getRoleDisplayName()}
+            </span>
+            {activeTab === 'activity' && (
+              <button onClick={fetchActivityLogs} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition">
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -436,23 +450,22 @@ const Settings = () => {
                 </div>
                 
                 <form onSubmit={handlePasswordChange} className="p-4 space-y-3">
-                  {/* Password form fields - unchanged */}
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">Current Password</label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
                       <input 
                         type={showCurrentPassword ? 'text' : 'password'} 
-                        value={passwordForm.current_password} 
-                        onChange={(e) => setPasswordForm({ ...passwordForm, current_password: e.target.value })} 
-                        className={`w-full pl-9 pr-8 py-1.5 border border-gray-200 rounded-lg text-sm ${passwordErrors.current_password ? 'border-red-500' : 'focus:ring-2 focus:ring-green-500'}`} 
+                        value={passwordForm.old_password} 
+                        onChange={(e) => setPasswordForm({ ...passwordForm, old_password: e.target.value })} 
+                        className={`w-full pl-9 pr-8 py-1.5 border border-gray-200 rounded-lg text-sm ${passwordErrors.old_password ? 'border-red-500' : 'focus:ring-2 focus:ring-green-500'}`} 
                         placeholder="Current password" 
                       />
                       <button type="button" onClick={() => setShowCurrentPassword(!showCurrentPassword)} className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400">
                         {showCurrentPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
                     </div>
-                    {passwordErrors.current_password && <p className="text-xs text-red-500 mt-1">{passwordErrors.current_password}</p>}
+                    {passwordErrors.old_password && <p className="text-xs text-red-500 mt-1">{passwordErrors.old_password}</p>}
                   </div>
                   
                   <div>
@@ -517,7 +530,7 @@ const Settings = () => {
             </div>
           )}
 
-          {/* Notifications Tab - unchanged */}
+          {/* Notifications Tab */}
           {activeTab === 'notifications' && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-gray-200 bg-gray-50">
@@ -530,10 +543,10 @@ const Settings = () => {
               <div className="p-4 space-y-3">
                 {[
                   { key: 'email_notifications', label: 'Email Notifications', icon: Mail, desc: 'Receive email updates about your account' },
-                  { key: 'initiative_updates', label: 'Initiative Updates', icon: Target, desc: 'Get notified when initiatives are updated' },
+                  { key: 'activity_updates', label: 'Activity Updates', icon: Target, desc: 'Get notified when activities are updated' },
                   { key: 'performance_alerts', label: 'Performance Alerts', icon: Activity, desc: 'Receive alerts for performance milestones' },
                   { key: 'weekly_summary', label: 'Weekly Summary', icon: Clock, desc: 'Weekly digest of all activities' },
-                  { key: 'monthly_report', label: 'Monthly Report', icon: Activity, desc: 'Monthly performance report' }
+                  { key: 'monthly_report', label: 'Monthly Report', icon: Award, desc: 'Monthly performance report' }
                 ].map((item) => {
                   const Icon = item.icon;
                   return (

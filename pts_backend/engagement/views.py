@@ -1,376 +1,252 @@
 # engagement/views.py
-from rest_framework import generics, status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from amqp import NotFound
+from rest_framework import generics, status, permissions
 from rest_framework.response import Response
-from django.db.models import Q, Count
-from django.shortcuts import get_object_or_404
-from django.contrib.auth import get_user_model
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.decorators import api_view, permission_classes
+from django.db import models
+from .models import ProjectImage, ProjectComment, CommentReaction, ProjectActivityFollow
+from .serializers import *
+from main.models import ProjectActivity
 
-from main.models import ProjectInitiative
-from .models import AnonymousCommenter, ProjectComment, CommentReaction, ProjectImage
-from .serializers import (
-    ProjectCommentSerializer, PublicProjectSerializer, 
-    ProjectImageSerializer, AnonymousCommenterSerializer, ProjectImageUploadSerializer
-)
-import uuid
 
-User = get_user_model()
+# ==================== Helper Functions ====================
+def _can_modify_activity_images(user, activity):
+    """(i) Only the DO assigned to this activity's dept/agency, or super_admin."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or getattr(user, 'role', None) == 'super_admin':
+        return True
+    if getattr(user, 'role', None) != 'delivery_officer':
+        return False
+    if user.assigned_department and activity.department_id == user.assigned_department_id:
+        return True
+    if user.assigned_agency and activity.agency_id == user.assigned_agency_id:
+        return True
+    return False
 
-# engagement/views.py - Update PublicProjectListView
-
-class PublicProjectListView(generics.ListAPIView):
-    """List all initiatives/projects for public view"""
-    serializer_class = PublicProjectSerializer
-    permission_classes = [AllowAny]
+# ==================== Public Views (No Auth) ====================
+class PublicProjectImagesView(generics.ListAPIView):
+    """Public: List images for a project activity"""
+    serializer_class = ProjectImageSerializer
+    permission_classes = [permissions.AllowAny]
     
     def get_queryset(self):
-        queryset = ProjectInitiative.objects.all().prefetch_related('images', 'comments')
-        
-        # Filter by year (from start_date)
-        year = self.request.query_params.get('year')
-        if year:
-            queryset = queryset.filter(start_date__year=year)
-        
-        # Filter by department
-        department = self.request.query_params.get('department')
-        if department:
-            queryset = queryset.filter(department_id=department)
-        
-        # Filter by agency
-        agency = self.request.query_params.get('agency')
-        if agency:
-            queryset = queryset.filter(agency_id=agency)
-        
-        # Filter by status
-        status_filter = self.request.query_params.get('status')
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
-        
-        # Search
-        search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(title__icontains=search) |
-                Q(description__icontains=search) |
-                Q(code__icontains=search)
-            )
-        
-        order_by = self.request.query_params.get('order_by', '-created_at')
-        queryset = queryset.order_by(order_by)
-        
-        return queryset
-    
-    def list(self, request, *args, **kwargs):
-        """Override list to pass request context to serializer"""
-        queryset = self.filter_queryset(self.get_queryset())
-        
-        # Pagination
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True, context={'request': request})
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = self.get_serializer(queryset, many=True, context={'request': request})
-        return Response(serializer.data)
+        activity_id = self.kwargs.get('activity_id')
+        return ProjectImage.objects.filter(project_activity_id=activity_id)
 
-# engagement/views.py - Update PublicProjectDetailView
-class PublicProjectDetailView(generics.RetrieveAPIView):
-    """Get single initiative/project with all details"""
-    queryset = ProjectInitiative.objects.all().prefetch_related('images', 'comments')
-    serializer_class = PublicProjectSerializer
-    permission_classes = [AllowAny]
-    lookup_field = 'id'
-    
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, context={'request': request})
-        return Response(serializer.data)
 
-class ProjectCommentListView(generics.ListCreateAPIView):
-    """List and create comments for an initiative/project"""
+class PublicProjectCommentsView(generics.ListCreateAPIView):
+    """Public: List and create comments for a project activity"""
     serializer_class = ProjectCommentSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [permissions.AllowAny]
     
     def get_queryset(self):
-        initiative_id = self.kwargs.get('initiative_id')
+        activity_id = self.kwargs.get('activity_id')
         return ProjectComment.objects.filter(
-            project_id=initiative_id, 
+            project_activity_id=activity_id,
             parent__isnull=True
-        ).select_related('user', 'anonymous_user')
+        ).prefetch_related('reactions')
     
-    def create(self, request, *args, **kwargs):
-        initiative_id = self.kwargs.get('initiative_id')
-        initiative = get_object_or_404(ProjectInitiative, id=initiative_id)
-        
-        user = None
-        anonymous_user = None
-        
-        # Check if user is authenticated (logged in)
-        if request.user and request.user.is_authenticated:
-            user = request.user
-            # Update user's comment count
-            user.comment_count += 1
-            user.save(update_fields=['comment_count'])
-        else:
-            # Anonymous user
-            session_id = request.data.get('session_id', str(uuid.uuid4()))
-            display_name = request.data.get('display_name', 'Anonymous')
-            anonymous_user, created = AnonymousCommenter.objects.get_or_create(
-                session_id=session_id,
-                defaults={'display_name': display_name}
-            )
-            if not created and display_name != 'Anonymous':
-                anonymous_user.display_name = display_name
-                anonymous_user.save()
-        
-        # Apply rate limiting for anonymous users
-        if not user:
-            from django.utils import timezone
-            
-            today = timezone.now().date()
-            comments_today = ProjectComment.objects.filter(
-                anonymous_user=anonymous_user,
-                created_at__date=today
-            ).count()
-            
-            if comments_today >= 3:  # Limit anonymous users to 3 comments per day
-                return Response(
-                    {'error': 'Daily comment limit reached. Please register to continue commenting.'},
-                    status=status.HTTP_429_TOO_MANY_REQUESTS
-                )
-        
-        # Create the comment
-        comment = ProjectComment.objects.create(
-            project=initiative,
-            user=user,
-            anonymous_user=anonymous_user,
-            content=request.data.get('content'),
-            location=request.data.get('location', ''),
-            parent_id=request.data.get('parent_id'),
-            is_verified=user.is_staff if user else False  # Staff comments are auto-verified
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+    
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return CreateCommentSerializer
+        return ProjectCommentSerializer
+    
+    def perform_create(self, serializer):
+        session_id = self.request.META.get('HTTP_SESSION_ID')
+        serializer.save(
+            session_id=session_id,
+            display_name=self.request.data.get('display_name')
         )
         
-        serializer = self.get_serializer(comment)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+class PublicProjectCommentRepliesView(generics.ListAPIView):
+    """Public: List replies for a comment"""
+    serializer_class = ProjectCommentSerializer
+    permission_classes = [permissions.AllowAny]
+    
+    def get_queryset(self):
+        comment_id = self.kwargs.get('comment_id')
+        return ProjectComment.objects.filter(parent_id=comment_id)
+
+class PublicProjectActivitiesMapView(generics.ListAPIView):
+    """Public: Get project activities with coordinates for map"""
+    serializer_class = ProjectActivityListSerializer
+    permission_classes = [permissions.AllowAny]
+    
+    def get_queryset(self):
+        return ProjectActivity.objects.filter(
+            status='ongoing',
+            latitude__isnull=False,
+            longitude__isnull=False
+        )
+
+# ==================== Protected Views (Auth Required) ====================
+
+class ProjectImageUploadView(generics.CreateAPIView):
+    """Delivery Officer: Upload images for activities in their own dept/agency."""
+    serializer_class = ProjectImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        activity_id = request.data.get('project_activity')
+        if not activity_id:
+            return Response(
+                {'project_activity': 'This field is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        activity = ProjectActivity.objects.filter(pk=activity_id).first()
+        if not activity:
+            return Response(
+                {'project_activity': 'Activity not found.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not _can_modify_activity_images(request.user, activity):
+            return Response(
+                {'detail': 'You can only upload images to activities assigned to your department or agency.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(uploaded_by=self.request.user)
+
+class ProjectImageDeleteView(generics.DestroyAPIView):
+    """Delete a project image (scoped to the requester's assigned dept/agency)."""
+    serializer_class = ProjectImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        image = generics.get_object_or_404(ProjectImage, pk=self.kwargs.get('pk'))
+        if not _can_modify_activity_images(self.request.user, image.project_activity):
+            raise permissions.PermissionDenied(
+                'You can only delete images on activities assigned to your department or agency.'
+            )
+        return image
+
+class ProjectImageSetPrimaryView(generics.UpdateAPIView):
+    """Set an image as primary for its activity (DO-scoped, super_admin bypass)."""
+    serializer_class = ProjectImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['patch']
+
+    def get_object(self):
+        image = generics.get_object_or_404(ProjectImage, pk=self.kwargs.get('pk'))
+        if not _can_modify_activity_images(self.request.user, image.project_activity):
+            raise permissions.PermissionDenied(
+                'You can only modify images on activities assigned to your department or agency.'
+            )
+        return image
+
+    def patch(self, request, *args, **kwargs):
+        image = self.get_object()
+        activity = image.project_activity
+
+        ProjectImage.objects.filter(
+            project_activity=activity
+        ).exclude(pk=image.pk).update(is_primary=False)
+
+        image.is_primary = True
+        image.save(update_fields=['is_primary'])
+
+        return Response(
+            ProjectImageSerializer(image, context={'request': request}).data,
+            status=status.HTTP_200_OK,
+        )
 
 class CommentReactionView(generics.CreateAPIView):
-    """Add reaction to a comment"""
-    permission_classes = [AllowAny]
+    """Create/update reaction to a comment"""
+    serializer_class = CommentReactionSerializer
+    permission_classes = [permissions.AllowAny]  # Allow anonymous users
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        # Get session_id from headers
+        session_id = self.request.META.get('HTTP_SESSION_ID')
+        context['session_id'] = session_id
+        return context
     
     def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class CommentReactionDeleteView(generics.DestroyAPIView):
+    """Remove reaction from a comment"""
+    permission_classes = [permissions.AllowAny]
+    
+    def get_object(self):
         comment_id = self.kwargs.get('comment_id')
-        comment = get_object_or_404(ProjectComment, id=comment_id)
-        reaction_type = request.data.get('reaction_type')
+        session_id = self.request.META.get('HTTP_SESSION_ID')
         
-        if not reaction_type:
-            return Response({'error': 'reaction_type required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        user = None
-        anonymous_user = None
-        
-        # Check if authenticated user
-        if request.user and request.user.is_authenticated:
-            user = request.user
-        else:
-            session_id = request.data.get('session_id', str(uuid.uuid4()))
-            anonymous_user, _ = AnonymousCommenter.objects.get_or_create(session_id=session_id)
-        
-        # Check for existing reaction
-        existing_reaction = None
-        if user:
-            existing_reaction = CommentReaction.objects.filter(
-                comment=comment, user=user
-            ).first()
-        elif anonymous_user:
-            existing_reaction = CommentReaction.objects.filter(
-                comment=comment, anonymous_user=anonymous_user
-            ).first()
-        
-        if existing_reaction:
-            # Remove existing reaction (toggle)
-            existing_reaction.delete()
-            return Response({'message': 'Reaction removed'}, status=status.HTTP_200_OK)
-        
-        # Create new reaction
-        reaction = CommentReaction.objects.create(
-            comment=comment,
-            user=user,
-            anonymous_user=anonymous_user,
-            reaction_type=reaction_type
+        # Try to find the reaction
+        if self.request.user.is_authenticated:
+            return CommentReaction.objects.get(
+                comment_id=comment_id,
+                user=self.request.user
+            )
+        elif session_id:
+            return CommentReaction.objects.get(
+                comment_id=comment_id,
+                session_id=session_id
+            )
+        raise NotFound("Reaction not found")
+
+class FollowProjectActivityView(generics.CreateAPIView):
+    """User follows a project activity"""
+    serializer_class = ProjectActivityFollowSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+class UnfollowProjectActivityView(generics.DestroyAPIView):
+    """User unfollows a project activity"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_object(self):
+        activity_id = self.kwargs.get('activity_id')
+        return ProjectActivityFollow.objects.get(
+            project_activity_id=activity_id,
+            user=self.request.user
         )
-        
-        return Response({'message': 'Reaction added'}, status=status.HTTP_201_CREATED)
 
-class RegisterPublicUserView(generics.CreateAPIView):
-    """Register a public user (creates regular User account)"""
-    permission_classes = [AllowAny]
+class UserFollowedActivitiesView(generics.ListAPIView):
+    """List project activities user follows"""
+    serializer_class = ProjectActivityListSerializer
+    permission_classes = [permissions.IsAuthenticated]
     
-    def create(self, request, *args, **kwargs):
-        email = request.data.get('email')
-        full_name = request.data.get('full_name', '')
-        password = request.data.get('password')
-        location = request.data.get('location', '')
-        
-        if not email or not password:
-            return Response({'error': 'Email and password required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if User.objects.filter(email=email).exists():
-            return Response({'error': 'Email already registered'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Split full name into first and last name
-        name_parts = full_name.split(' ', 1)
-        first_name = name_parts[0]
-        last_name = name_parts[1] if len(name_parts) > 1 else ''
-        
-        # Create user (regular user, not staff)
-        user = User.objects.create_user(
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            location=location,
-            is_public_only=True,
-            is_staff=False
+    def get_queryset(self):
+        return ProjectActivity.objects.filter(
+            followers__user=self.request.user
         )
+
+# ==================== Staff Moderation Views ====================
+
+class ModerateCommentView(generics.UpdateAPIView):
+    """Staff: Verify or delete comments"""
+    queryset = ProjectComment.objects.all()
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    
+    def patch(self, request, *args, **kwargs):
+        comment = self.get_object()
+        action = request.data.get('action')
         
-        return Response({
-            'message': 'Registration successful',
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'full_name': user.full_name
-            }
-        }, status=status.HTTP_201_CREATED)
-    
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def get_rate_limit(request):
-    """Get remaining comments for anonymous user"""
-    session_id = request.query_params.get('session_id')
-    
-    if not session_id:
-        return Response({'remaining': 3, 'reset_time': None})
-    
-    from django.utils import timezone
-    
-    today = timezone.now().date()
-    anonymous_user = AnonymousCommenter.objects.filter(session_id=session_id).first()
-    
-    if anonymous_user:
-        comments_today = ProjectComment.objects.filter(
-            anonymous_user=anonymous_user,
-            created_at__date=today
-        ).count()
-        remaining = max(0, 3 - comments_today)
+        if action == 'verify':
+            comment.is_verified = True
+            comment.save()
+            return Response({'message': 'Comment verified'})
+        elif action == 'delete':
+            comment.delete()
+            return Response({'message': 'Comment deleted'})
         
-        # Calculate reset time (end of day)
-        reset_time = timezone.now().replace(hour=23, minute=59, second=59)
-        
-        return Response({
-            'remaining': remaining,
-            'reset_time': reset_time.isoformat()
-        })
-    
-    return Response({'remaining': 3, 'reset_time': None})
-
-
-# ==================== Image Management Views ====================
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def upload_initiative_image(request, initiative_id):
-    """Upload an image for an initiative/project"""
-    try:
-        initiative = ProjectInitiative.objects.get(id=initiative_id)
-    except ProjectInitiative.DoesNotExist:
-        return Response({'error': 'Initiative not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    # Check if user has permission
-    if not (request.user.is_staff or request.user.is_superuser):
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    # Check image limit (max 4 images per initiative)
-    current_images = initiative.images.count()
-    if current_images >= 4:
-        return Response({'error': 'Maximum 4 images allowed per initiative'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    serializer = ProjectImageUploadSerializer(data=request.data)
-    if serializer.is_valid():
-        # If this is the first image, make it primary
-        is_primary = current_images == 0
-        
-        image = serializer.save(
-            project=initiative,
-            uploaded_by=request.user,
-            is_primary=is_primary
-        )
-        
-        return Response(ProjectImageSerializer(image, context={'request': request}).data, 
-                       status=status.HTTP_201_CREATED)
-    
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def delete_initiative_image(request, image_id):
-    """Delete an initiative image"""
-    try:
-        image = ProjectImage.objects.get(id=image_id)
-    except ProjectImage.DoesNotExist:
-        return Response({'error': 'Image not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    # Check if user has permission
-    if not (request.user.is_staff or request.user.is_superuser):
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    # If deleting primary image, set another image as primary
-    was_primary = image.is_primary
-    image.delete()
-    
-    if was_primary:
-        # Set the first remaining image as primary
-        remaining_images = ProjectImage.objects.filter(project=image.project)
-        if remaining_images.exists():
-            first_image = remaining_images.first()
-            first_image.is_primary = True
-            first_image.save()
-    
-    return Response({'message': 'Image deleted successfully'}, status=status.HTTP_200_OK)
-
-@api_view(['PUT'])
-@permission_classes([IsAuthenticated])
-def set_primary_image(request, image_id):
-    """Set an image as the primary image for its initiative"""
-    try:
-        image = ProjectImage.objects.get(id=image_id)
-    except ProjectImage.DoesNotExist:
-        return Response({'error': 'Image not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    # Check if user has permission
-    if not (request.user.is_staff or request.user.is_superuser):
-        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-    
-    # Remove primary flag from all project images
-    ProjectImage.objects.filter(project=image.project).update(is_primary=False)
-    
-    # Set this image as primary
-    image.is_primary = True
-    image.save()
-    
-    return Response({'message': 'Primary image updated'}, status=status.HTTP_200_OK)
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def get_initiative_images(request, initiative_id):
-    """Get all images for an initiative/project"""
-    try:
-        initiative = ProjectInitiative.objects.get(id=initiative_id)
-    except ProjectInitiative.DoesNotExist:
-        return Response({'error': 'Initiative not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    images = initiative.images.all()
-    serializer = ProjectImageSerializer(images, many=True, context={'request': request})
-    return Response(serializer.data)
+        return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)

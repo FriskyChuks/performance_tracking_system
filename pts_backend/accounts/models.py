@@ -19,22 +19,35 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
-        
+        extra_fields.setdefault('can_access_dashboard', True)
+        extra_fields.setdefault('role', 'super_admin')   # ← add this
+
         return self.create_user(email, password, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
+    # User Roles (for easier querying)
+    USER_ROLES = [
+        ('super_admin', 'Super Admin (Technical)'),
+        ('project_admin', 'Project Admin'),
+        ('delivery_officer', 'Delivery Officer'),
+        ('director', 'Director'),
+        ('sector_expert', 'Sector Expert'),
+        ('public_user', 'Public User'),
+    ]
+    
     # Basic Information
     email = models.EmailField(unique=True, db_index=True)
     first_name = models.CharField(max_length=150, blank=True)
     last_name = models.CharField(max_length=150, blank=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
+    role = models.CharField(max_length=20, choices=USER_ROLES, default='public_user')
     
     # Dashboard fields
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now)
     
-    # Assignment to Department or Agency (instead of Ministry)
+    # Assignment to Department or Agency
     assigned_department = models.ForeignKey(
         'main.Department', 
         on_delete=models.SET_NULL, 
@@ -63,7 +76,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     upgraded_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True)
     upgraded_at = models.DateTimeField(null=True, blank=True)
     
-    # Groups and permissions are already included via PermissionsMixin
     objects = UserManager()
     
     USERNAME_FIELD = 'email'
@@ -92,17 +104,38 @@ class User(AbstractBaseUser, PermissionsMixin):
             return {'type': 'agency', 'name': self.assigned_agency.name, 'id': self.assigned_agency.id}
         return None
     
+    # Permission checks based on role
+    @property
+    def is_super_admin(self):
+        return self.role == 'super_admin' or self.is_superuser
+
+    @property
+    def is_project_admin(self):
+        return self.role == 'project_admin' or self.is_superuser
+    
+    @property
+    def is_delivery_officer(self):
+        return self.role == 'delivery_officer' or self.is_superuser
+    
+    @property
+    def is_director(self):
+        return self.role == 'director' or self.is_superuser
+    
+    @property
+    def is_sector_expert(self):
+        return self.role == 'sector_expert' or self.is_superuser
+    
     @property
     def can_moderate_comments(self):
-        return self.has_perm('engagement.moderate_comments') or self.is_staff
+        return self.is_staff or self.has_perm('engagement.moderate_comments')
     
     @property
     def can_manage_projects(self):
-        return self.has_perm('main.manage_projects') or self.is_staff
+        return self.is_project_admin or self.is_superuser
     
     @property
     def can_view_reports(self):
-        return self.has_perm('reports.view_reports') or self.is_staff
+        return self.is_staff or self.is_superuser
     
     class Meta:
         permissions = [
@@ -112,7 +145,7 @@ class User(AbstractBaseUser, PermissionsMixin):
             ("manage_agencies", "Can manage agencies"),
             ("manage_priority_areas", "Can manage priority areas"),
             ("manage_deliverables", "Can manage deliverables"),
-            ("manage_all_initiatives", "Can manage all initiatives"),
+            ("manage_all_activities", "Can manage all project activities"),
             ("view_all_reports", "Can view all reports"),
             ("export_data", "Can export data"),
             
@@ -133,12 +166,15 @@ class ActivityLog(models.Model):
         ('login', 'Login'),
         ('logout', 'Logout'),
         ('create', 'Create'),
-        ('initiative_created', 'Initiative Created'),
+        ('activity_created', 'Project Activity Created'),
         ('update', 'Update'),
-        ('initiative_updated', 'Initiative Updated'),
+        ('activity_updated', 'Project Activity Updated'),
         ('delete', 'Delete'),
-        ('initiative_deleted', 'Initiative Deleted'),
+        ('activity_deleted', 'Project Activity Deleted'),
         ('progress_recorded', 'Progress Recorded'),
+        ('quarterly_progress_submitted', 'Quarterly Progress Submitted'),
+        ('quarterly_progress_approved', 'Quarterly Progress Approved'),
+        ('expert_assessment_completed', 'Expert Assessment Completed'),
         ('view', 'View'),
         ('export', 'Export'),
         ('generate_report', 'Generate Report'),

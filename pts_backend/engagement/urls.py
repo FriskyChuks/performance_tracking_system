@@ -3,23 +3,26 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # Public initiative/project views
-    path('initiatives/', views.PublicProjectListView.as_view(), name='public-initiatives'),
-    path('initiatives/<int:id>/', views.PublicProjectDetailView.as_view(), name='public-initiative-detail'),
+    # Public endpoints
+    path('public/activities/<int:activity_id>/images/', views.PublicProjectImagesView.as_view(), name='public-images'),
+    path('public/activities/<int:activity_id>/comments/', views.PublicProjectCommentsView.as_view(), name='public-comments'),
+    path('public/comments/<int:comment_id>/replies/', views.PublicProjectCommentRepliesView.as_view(), name='public-replies'),
+    path('public/map/activities/', views.PublicProjectActivitiesMapView.as_view(), name='public-map'),
     
-    # Comment views
-    path('initiatives/<int:initiative_id>/comments/', views.ProjectCommentListView.as_view(), name='initiative-comments'),
-    path('comments/<int:comment_id>/react/', views.CommentReactionView.as_view(), name='comment-react'),
+    # Reactions
+    path('reactions/', views.CommentReactionView.as_view(), name='reaction-create'),
+    path('reactions/comments/<int:comment_id>/', views.CommentReactionDeleteView.as_view(), name='reaction-delete'),
     
-    # User registration
-    path('register/', views.RegisterPublicUserView.as_view(), name='register-public-user'),
+    # Image management (authenticated)
+    path('images/upload/', views.ProjectImageUploadView.as_view(), name='image-upload'),
+    path('images/<int:pk>/set-primary/', views.ProjectImageSetPrimaryView.as_view(), name='image-set-primary'),
+    path('images/<int:pk>/', views.ProjectImageDeleteView.as_view(), name='image-delete'),
     
-    # Rate limit
-    path('rate-limit/', views.get_rate_limit, name='rate-limit'),
+    # Follow functionality
+    path('follow/<int:activity_id>/', views.FollowProjectActivityView.as_view(), name='follow'),
+    path('unfollow/<int:activity_id>/', views.UnfollowProjectActivityView.as_view(), name='unfollow'),
+    path('my-follows/', views.UserFollowedActivitiesView.as_view(), name='my-follows'),
     
-    # Image upload endpoints
-    path('initiatives/<int:initiative_id>/images/', views.get_initiative_images, name='initiative-images'),
-    path('initiatives/<int:initiative_id>/images/upload/', views.upload_initiative_image, name='upload-initiative-image'),
-    path('images/<int:image_id>/', views.delete_initiative_image, name='delete-initiative-image'),
-    path('images/<int:image_id>/set-primary/', views.set_primary_image, name='set-primary-image'),
+    # Moderation (staff only)
+    path('moderate/comments/<int:pk>/', views.ModerateCommentView.as_view(), name='moderate-comment'),
 ]

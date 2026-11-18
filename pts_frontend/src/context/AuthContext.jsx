@@ -1,4 +1,4 @@
-// src/context/AuthContext.jsx
+// context/AuthContext.jsx
 import React, { useState, useEffect, createContext } from 'react';
 import accountsApi from '../services/accountsApi';
 import toast from 'react-hot-toast';
@@ -23,20 +23,16 @@ export const AuthProvider = ({ children }) => {
         setUser(userData);
         localStorage.setItem('user_data', JSON.stringify(userData));
         
-        // Try to fetch role and permissions, but don't fail if endpoint doesn't exist
-        try {
-          const roleResponse = await accountsApi.getUserInfo();
-          if (roleResponse && roleResponse.data) {
-            setUserRole(roleResponse.data.role);
-            setUserPermissions(roleResponse.data.permissions || {});
-          }
-        } catch (roleError) {
-          console.warn('Could not fetch user role info:', roleError);
-          // Fallback: determine role from groups
-          if (userData && userData.groups && userData.groups.length > 0) {
-            setUserRole(userData.groups[0].name);
-          }
+        // Set role from user data
+        if (userData && userData.role) {
+          console.log('User role from API:', userData.role); // Debug log
+          setUserRole(userData.role);
+        } else {
+          console.log('No role found in user data:', userData);
         }
+        
+        // Set permissions based on role
+        setUserPermissions(getPermissionsForRole(userData.role));
         
       } catch (error) {
         console.error('Auth check failed:', error);
@@ -48,36 +44,66 @@ export const AuthProvider = ({ children }) => {
     setLoading(false);
   };
 
+  // Helper to get permissions based on role
+  const getPermissionsForRole = (role) => {
+    const permissions = {
+      project_admin: {
+        canCreateActivity: true,
+        canEditActivity: true,
+        canDeleteActivity: true,
+        canViewAllReports: true,
+        canManageUsers: true,  // Changed to true for project_admin
+      },
+      delivery_officer: {
+        canUpdateProgress: true,
+        canUploadImages: true,
+        canViewAssignedActivities: true,
+        canSubmitForApproval: true,
+      },
+      director: {
+        canApproveProgress: true,
+        canViewAllReports: true,
+        canRejectProgress: true,
+      },
+      sector_expert: {
+        canAssessProgress: true,
+        canViewAssessments: true,
+        canProvideRatings: true,
+      },
+      public_user: {
+        canViewPublic: true,
+        canComment: true,
+        canFollow: true,
+      },
+    };
+    return permissions[role] || permissions.public_user;
+  };
+
   const login = async (email, password) => {
     try {
       const data = await accountsApi.login(email, password);
+      console.log('Login response:', data); // Debug log
+      
       localStorage.setItem('access_token', data.access);
       localStorage.setItem('refresh_token', data.refresh);
       
-      const userData = await accountsApi.getCurrentUser();
+      const userData = data.user;
+      console.log('User data from login:', userData); // Debug log
+      console.log('User role:', userData?.role); // Debug log
+      
       setUser(userData);
       localStorage.setItem('user_data', JSON.stringify(userData));
       
-      // Try to fetch role and permissions, but don't fail if endpoint doesn't exist
-      try {
-        const roleResponse = await accountsApi.getUserInfo();
-        if (roleResponse && roleResponse.data) {
-          setUserRole(roleResponse.data.role);
-          setUserPermissions(roleResponse.data.permissions || {});
-        }
-      } catch (roleError) {
-        console.warn('Could not fetch user role info:', roleError);
-        // Fallback: determine role from groups
-        if (userData && userData.groups && userData.groups.length > 0) {
-          setUserRole(userData.groups[0].name);
-        }
+      if (userData && userData.role) {
+        setUserRole(userData.role);
+        setUserPermissions(getPermissionsForRole(userData.role));
       }
       
-      toast.success('Login successful!');
+      toast.success(`Welcome back, ${userData.first_name || userData.email}!`);
       return true;
     } catch (error) {
       console.error('Login error:', error);
-      toast.error(error.response?.data?.detail || 'Invalid credentials');
+      toast.error(error.response?.data?.error || 'Invalid credentials');
       return false;
     }
   };
@@ -89,9 +115,7 @@ export const AuthProvider = ({ children }) => {
       return true;
     } catch (error) {
       console.error('Registration error:', error);
-      const errorMessage = error.response?.data?.error || 
-                          error.response?.data?.detail ||
-                          'Registration failed';
+      const errorMessage = error.response?.data?.error || 'Registration failed';
       toast.error(errorMessage);
       return false;
     }
@@ -124,21 +148,11 @@ export const AuthProvider = ({ children }) => {
       return null;
     }
   };
-  
-  const fetchUserGroups = async () => {
-  try {
-    const response = await accountsApi.getCurrentUser();
-    const userGroups = response.data.groups || [];
-    const userRole = userGroups.length > 0 ? userGroups[0].name : null;
-    return { userGroups, userRole };
-  } catch (error) {
-    console.error('Error fetching user groups:', error);
-    return { userGroups: [], userRole: null };
-  }
-};
 
-  const canAccessDashboard = user?.can_access_dashboard || user?.is_staff || user?.is_superuser || false;
-  const isPublicOnly = user?.is_public_only || false;
+  // FIXED: This should return a boolean directly, not a function
+  const canAccessDashboard = userRole && userRole !== 'public_user';
+
+  const isPublicOnly = userRole === 'public_user' || !userRole;
 
   const value = {
     user,
@@ -150,7 +164,6 @@ export const AuthProvider = ({ children }) => {
     logout,
     updateUser,
     refreshUser,
-    fetchUserGroups,
     isAuthenticated: !!user,
     canAccessDashboard,
     isPublicOnly,

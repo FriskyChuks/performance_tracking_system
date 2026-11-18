@@ -1,66 +1,222 @@
-// src/services/engagementApi.js
-import api, { publicClient } from './api';
-import toast from 'react-hot-toast';
+// services/engagementApi.js
+import api from './api';
 
-export const engagementApi = {
-  // ==================== Public Initiatives (Projects) ====================
-  getInitiatives: (params) => publicClient.get('/engagement/initiatives/', { params }),
-  getInitiative: (id) => publicClient.get(`/engagement/initiatives/${id}/`),
-  
-  // ==================== Comments ====================
-  // Anonymous comments
-  getComments: (initiativeId) => publicClient.get(`/engagement/initiatives/${initiativeId}/comments/`),
-  postComment: (initiativeId, data) => publicClient.post(`/engagement/initiatives/${initiativeId}/comments/`, data),
-  
-  // Authenticated comments
-  postCommentAuthenticated: (initiativeId, data) => {
-    const token = localStorage.getItem('access_token');
-    return api.post(`/engagement/initiatives/${initiativeId}/comments/`, data, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+const engagementApi = {
+  // ==================== Public Endpoints ====================
+  getActivityImages: async (activityId) => {
+    try {
+      const response = await api.get(`/engagement/public/activities/${activityId}/images/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching activity images:', error);
+      return [];
+    }
   },
   
+  getActivityComments: async (activityId) => {
+    try {
+      const response = await api.get(`/engagement/public/activities/${activityId}/comments/`);
+      console.log('API response for comments:', response);
+      
+      // Return the results array if it exists, otherwise return the data
+      if (response.data && response.data.results) {
+        return response.data.results;
+      }
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching activity comments:', error);
+      return [];
+    }
+  },
+  
+  postComment: async (activityId, data, sessionId = null) => {
+    try {
+      const headers = sessionId ? { 'HTTP_SESSION_ID': sessionId } : {};
+      const response = await api.post(`/engagement/public/activities/${activityId}/comments/`, data, { headers });
+      return response.data;
+    } catch (error) {
+      console.error('Error posting comment:', error);
+      throw error;
+    }
+  },
+  
+  getCommentReplies: async (commentId) => {
+    try {
+      const response = await api.get(`/engagement/public/comments/${commentId}/replies/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching comment replies:', error);
+      return [];
+    }
+  },
+  
+  getMapActivities: async () => {
+    try {
+      const response = await api.get('/engagement/public/map/activities/');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching map activities:', error);
+      return [];
+    }
+  },
+  
+
   // ==================== Reactions ====================
-  reactToComment: (commentId, data) => publicClient.post(`/engagement/comments/${commentId}/react/`, data),
-  reactToCommentAuthenticated: (commentId, data) => {
-    const token = localStorage.getItem('access_token');
-    return api.post(`/engagement/comments/${commentId}/react/`, data, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+  addReaction: async (commentId, reactionType, sessionId = null) => {
+    try {
+      // Always set up headers properly
+      const headers = {};
+      if (sessionId) {
+        headers['HTTP_SESSION_ID'] = sessionId;
+      }
+      
+      const response = await api.post('/engagement/reactions/', 
+        { comment: commentId, reaction_type: reactionType },
+        { headers }
+      );
+      console.log('Reaction added:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Error adding reaction:', error);
+      console.error('Response data:', error.response?.data);
+      throw error;
+    }
+  },
+
+  removeReaction: async (commentId, sessionId = null) => {
+    try {
+      const headers = {};
+      if (sessionId) {
+        headers['HTTP_SESSION_ID'] = sessionId;
+      }
+      
+      const response = await api.delete(`/engagement/reactions/comments/${commentId}/`, { headers });
+      console.log('Reaction removed:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Error removing reaction:', error);
+      console.error('Response data:', error.response?.data);
+      throw error;
+    }
   },
   
-  // ==================== Images ====================
-  getInitiativeImages: (initiativeId) => publicClient.get(`/engagement/initiatives/${initiativeId}/images/`),
-  
-  uploadImage: (initiativeId, formData) => {
-    const token = localStorage.getItem('access_token');
-    return api.post(`/engagement/initiatives/${initiativeId}/images/upload/`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-        Authorization: `Bearer ${token}`
-      },
-    });
+  // ==================== Image Management (Authenticated) ====================
+  uploadImage: async (formData) => {
+    try {
+      const response = await api.post('/engagement/images/upload/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      throw error;
+    }
   },
   
-  deleteImage: (imageId) => {
-    const token = localStorage.getItem('access_token');
-    return api.delete(`/engagement/images/${imageId}/`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+  deleteImage: async (imageId) => {
+    try {
+      const response = await api.delete(`/engagement/images/${imageId}/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting image:', error);
+      throw error;
+    }
   },
   
-  setPrimaryImage: (imageId) => {
-    const token = localStorage.getItem('access_token');
-    return api.put(`/engagement/images/${imageId}/set-primary/`, {}, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+  setPrimaryImage: async (imageId) => {
+    try {
+      const response = await api.patch(`/engagement/images/${imageId}/set-primary/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error setting primary image:', error);
+      throw error;
+    }
   },
   
-  // ==================== Rate Limit ====================
-  getRateLimit: (sessionId) => publicClient.get(`/engagement/rate-limit/?session_id=${sessionId}`),
+  // ==================== Follow Functionality (Authenticated) ====================
+  followActivity: async (activityId) => {
+    try {
+      const response = await api.post(`/engagement/follow/${activityId}/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error following activity:', error);
+      throw error;
+    }
+  },
   
-  // ==================== User Registration ====================
-  registerPublicUser: (data) => publicClient.post('/engagement/register/', data),
+  unfollowActivity: async (activityId) => {
+    try {
+      const response = await api.delete(`/engagement/unfollow/${activityId}/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error unfollowing activity:', error);
+      throw error;
+    }
+  },
+  
+  getFollowedActivities: async () => {
+    try {
+      const response = await api.get('/engagement/my-follows/');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching followed activities:', error);
+      return [];
+    }
+  },
+  
+  // ==================== Moderation (Staff Only) ====================
+  verifyComment: async (commentId) => {
+    try {
+      const response = await api.patch(`/engagement/moderate/comments/${commentId}/`, { action: 'verify' });
+      return response.data;
+    } catch (error) {
+      console.error('Error verifying comment:', error);
+      throw error;
+    }
+  },
+  
+  deleteComment: async (commentId) => {
+    try {
+      const response = await api.patch(`/engagement/moderate/comments/${commentId}/`, { action: 'delete' });
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting comment:', error);
+      throw error;
+    }
+  },
+  
+  // ==================== Activity Documents ====================
+  getActivityDocuments: async (activityId) => {
+    try {
+      const response = await api.get(`/engagement/activities/${activityId}/documents/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching activity documents:', error);
+      return [];
+    }
+  },
+  
+  uploadDocument: async (formData) => {
+    try {
+      const response = await api.post('/engagement/documents/upload/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error uploading document:', error);
+      throw error;
+    }
+  },
+  
+  deleteDocument: async (documentId) => {
+    try {
+      const response = await api.delete(`/engagement/documents/${documentId}/`);
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting document:', error);
+      throw error;
+    }
+  }
 };
 
 export default engagementApi;

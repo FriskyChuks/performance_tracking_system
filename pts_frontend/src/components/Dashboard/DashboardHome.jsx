@@ -1,431 +1,516 @@
 // src/components/Dashboard/DashboardHome.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { 
-  TrendingUp, Target, CheckCircle, Building2, Layers, Package,
-  Eye, Download, RefreshCw, Plus, Calendar, ArrowUp, Landmark, Briefcase,
-  Award, Zap, Activity, Clock
+import {
+  TrendingUp, Target, CheckCircle2, Building2, Layers, Package,
+  Eye, RefreshCw, Plus, Calendar, Landmark, Award, Activity,
+  AlertTriangle, Gauge, Users,
 } from 'lucide-react';
 import mainApi from '../../services/mainApi';
 import reportsApi from '../../services/reportsApi';
 import { useAuth } from '../../hooks/useAuth';
-import { 
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, 
-  CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
-  AreaChart, Area, Legend
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area,
+  Legend, Line,
 } from 'recharts';
 import toast from 'react-hot-toast';
 
+const COLORS = ['#10b981', '#0ea5e9', '#8b5cf6', '#f59e0b', '#ef4444', '#14b8a6'];
+
+const fmt = (v, d = 1) => {
+  const n = parseFloat(v);
+  return isNaN(n) ? '—' : n.toFixed(d);
+};
+
+const STATUS_STYLES = {
+  planning:   { label: 'Planning',   cls: 'bg-gray-100 text-gray-700' },
+  ongoing:    { label: 'Ongoing',    cls: 'bg-blue-100 text-blue-700' },
+  completed:  { label: 'Completed',  cls: 'bg-emerald-100 text-emerald-700' },
+  on_hold:    { label: 'On Hold',    cls: 'bg-amber-100 text-amber-800' },
+  cancelled:  { label: 'Cancelled',  cls: 'bg-red-100 text-red-700' },
+};
+
+const StatusBadge = ({ status }) => {
+  const c = STATUS_STYLES[status] || STATUS_STYLES.planning;
+  return <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${c.cls}`}>{c.label}</span>;
+};
+
+const Card = ({ title, action, children, className = '' }) => (
+  <div className={`bg-white rounded-2xl border border-gray-200/80 shadow-sm p-4 ${className}`}>
+    {(title || action) && (
+      <div className="flex items-center justify-between mb-3">
+        {title && <h3 className="text-sm font-semibold text-gray-900">{title}</h3>}
+        {action}
+      </div>
+    )}
+    {children}
+  </div>
+);
+
+const EmptyChart = ({ label = 'No data for this year' }) => (
+  <div className="flex flex-col items-center justify-center text-center py-10">
+    <AlertTriangle className="w-8 h-8 text-amber-300 mb-2" />
+    <p className="text-sm text-gray-500">{label}</p>
+  </div>
+);
+
+const KpiTile = ({ icon: Icon, label, value, suffix, tone }) => (
+  <div className="bg-white rounded-2xl border border-gray-200/80 shadow-sm p-3 flex items-center gap-3 min-w-0">
+    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tone}`}>
+      <Icon className="w-4 h-4" />
+    </div>
+    <div className="min-w-0">
+      <p className="text-[11px] text-gray-500 truncate">{label}</p>
+      <p className="text-lg font-bold text-gray-900 leading-tight">
+        {value}
+        {suffix && <span className="text-xs text-gray-500 ml-0.5">{suffix}</span>}
+      </p>
+    </div>
+  </div>
+);
+
 const DashboardHome = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const userRole = user?.role;
-  const isAdmin = userRole === 'super_admin' || userRole === 'project_admin';
-  
-  const [stats, setStats] = useState(null);
+  const { user, userRole } = useAuth();
+  const isProjectAdmin   = userRole === 'project_admin';
+  const isDeliveryOfficer = userRole === 'delivery_officer';
+  const isSectorExpert   = userRole === 'sector_expert';
+  const isDirector       = userRole === 'director';
+
   const [loading, setLoading] = useState(true);
-  const [recentInitiatives, setRecentInitiatives] = useState([]);
-  const [quarterlyData, setQuarterlyData] = useState([]);
-  const [departmentPerformance, setDepartmentPerformance] = useState([]);
-  const [agencyPerformance, setAgencyPerformance] = useState([]);
+  const [error, setError] = useState(null);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [availableYears, setAvailableYears] = useState([]);
-  const [initiativeType, setInitiativeType] = useState('all');
-  
-  // Separate stats for counts
-  const [countStats, setCountStats] = useState({
-    totalDepartments: 0,
-    totalAgencies: 0,
-    totalPriorityAreas: 0,
-    totalDeliverables: 0
+  const [availableYears, setAvailableYears] = useState([new Date().getFullYear()]);
+
+  const [summary, setSummary] = useState(null);   // reportsApi.getSummary() output
+  const [recentActivities, setRecentActivities] = useState([]);
+  const [counts, setCounts] = useState({
+    departments: 0, agencies: 0, priorityAreas: 0, deliverables: 0, indicators: 0,
   });
 
-  // Destructure mainApi for easier access
-  const { initiatives, departments, agencies, priorityAreas, deliverables } = mainApi;
-
-  useEffect(() => { 
-    fetchCounts();
-    fetchDashboardData(); 
-  }, [selectedYear, initiativeType]);
-
-  const fetchCounts = async () => {
-    try {
-      // Fetch counts directly from the APIs
-      const [deptRes, agencyRes, priorityRes, deliverableRes] = await Promise.all([
-        departments.list(),
-        agencies.list(),
-        priorityAreas.list(),
-        deliverables.list()
-      ]);
-      
-      setCountStats({
-        totalDepartments: deptRes.data.length,
-        totalAgencies: agencyRes.data.length,
-        totalPriorityAreas: priorityRes.data.length,
-        totalDeliverables: deliverableRes.data.length
-      });
-    } catch (error) {
-      console.error('Error fetching counts:', error);
-    }
-  };
-
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
-      
-      // Fetch summary report data
-      const summaryRes = await reportsApi.getReportData('summary', { year: selectedYear });
-      const summaryData = summaryRes.data;
-      
-      // Fetch department performance
-      const deptRes = await reportsApi.getReportData('department', { year: selectedYear });
-      const deptData = deptRes.data;
-      
-      // Fetch agency performance
-      const agencyRes = await reportsApi.getReportData('agency', { year: selectedYear });
-      const agencyData = agencyRes.data;
-      
-      // Fetch quarterly data
-      const quarterlyRes = await reportsApi.getReportData('quarterly', { year: selectedYear });
-      const quarterlyReportData = quarterlyRes.data;
-      
-      // Fetch recent initiatives
-      const initiativesRes = await initiatives.list({ ordering: '-created_at' });
-      let allInitiatives = initiativesRes.data.results || initiativesRes.data;
-      
-      if (initiativeType !== 'all') {
-        allInitiatives = allInitiatives.filter(i => i.initiative_type === initiativeType);
+  // Static counts (independent of year, fetch once)
+  useEffect(() => {
+    (async () => {
+      try {
+        const [departments, agencies, priorityAreas, deliverables, indicators] = await Promise.all([
+          mainApi.getPublicDepartments(),
+          mainApi.getPublicAgencies(),
+          mainApi.getPublicPriorityAreas(),
+          mainApi.getPublicDeliverables(),
+          mainApi.getPublicIndicators(),
+        ]);
+        setCounts({
+          departments: departments?.length || 0,
+          agencies: agencies?.length || 0,
+          priorityAreas: priorityAreas?.length || 0,
+          deliverables: deliverables?.length || 0,
+          indicators: indicators?.length || 0,
+        });
+      } catch (err) {
+        console.error('Error fetching counts:', err);
       }
-      
-      // Process quarterly data for chart
-      const quarterChartData = (quarterlyReportData || []).map(q => ({
-        quarter: q.name,
-        initiatives: q.initiative_count || 0,
-        avgRating: q.avg_achievement?.toFixed(1) || 0,
-      }));
-      setQuarterlyData(quarterChartData);
-      
-      // Process department data for chart
-      const deptChartData = (deptData || []).slice(0, 6).map(d => ({
-        name: d.name.length > 12 ? d.name.substring(0, 10) + '..' : d.name,
-        fullName: d.name,
-        avgRating: d.avg_achievement?.toFixed(1) || 0,
-        initiatives: d.initiative_count || 0
-      }));
-      setDepartmentPerformance(deptChartData);
-      
-      // Process agency data for chart
-      const agencyChartData = (agencyData || []).slice(0, 6).map(a => ({
-        name: a.name.length > 12 ? a.name.substring(0, 10) + '..' : a.name,
-        fullName: a.name,
-        avgRating: a.avg_achievement?.toFixed(1) || 0,
-        initiatives: a.initiative_count || 0
-      }));
-      setAgencyPerformance(agencyChartData);
-      
-      // Get available years
-      const years = [...new Set(allInitiatives.map(i => new Date(i.start_date).getFullYear()))].sort((a, b) => b - a);
-      setAvailableYears(years);
-      
-      // Set recent initiatives
-      setRecentInitiatives(allInitiatives.slice(0, 5));
-      
-      // Set stats from summary data
-      setStats({
-        totalInitiatives: summaryData.summary?.total_initiatives || 0,
-        totalProjects: summaryData.summary?.total_projects || 0,
-        totalPrograms: summaryData.summary?.total_programs || 0,
-        avgRating: summaryData.summary?.avg_rating?.toFixed(1) || 0,
-        completionRate: summaryData.summary?.completion_rate?.toFixed(0) || 0,
-        ratingDistribution: Object.entries(summaryData.rating_distribution || {}).map(([name, value]) => ({ name, value })),
-        quarterlyTrend: summaryData.quarterly_trend || []
-      });
-      
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
-      toast.error('Failed to load dashboard');
-    } finally { 
+    })();
+  }, []);
+
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [summaryRes, activitiesRes] = await Promise.all([
+        reportsApi.getSummary(selectedYear),
+        mainApi.getPublicActivities({ ordering: '-created_at' }),
+      ]);
+
+      setSummary(summaryRes);
+
+      const allActivities = activitiesRes?.results || activitiesRes || [];
+      setRecentActivities(allActivities.slice(0, 6));
+
+      // Compute available years from activities + current year
+      const years = new Set(
+        allActivities
+          .map((a) => (a.start_date ? new Date(a.start_date).getFullYear() : null))
+          .filter(Boolean)
+      );
+      years.add(new Date().getFullYear());
+      years.add(selectedYear);
+      setAvailableYears([...years].sort((a, b) => b - a));
+    } catch (err) {
+      console.error('Dashboard fetch failed:', err);
+      const msg =
+        err?.response?.data?.detail ||
+        (err?.response?.status === 401
+          ? 'Session expired — please sign in again.'
+          : err?.message || 'Failed to load dashboard');
+      setError(msg);
+      toast.error(msg);
+    } finally {
       setLoading(false);
     }
-  };
+  }, [selectedYear]);
 
-  const statCards = [
-    { title: 'Departments', value: countStats.totalDepartments || 0, icon: Building2, color: 'blue' },
-    { title: 'Agencies', value: countStats.totalAgencies || 0, icon: Landmark, color: 'cyan' },
-    { title: 'Priority Areas', value: countStats.totalPriorityAreas || 0, icon: Layers, color: 'purple' },
-    { title: 'Deliverables', value: countStats.totalDeliverables || 0, icon: Package, color: 'emerald' },
-    { title: 'Initiatives', value: stats?.totalInitiatives || 0, icon: TrendingUp, color: 'orange' },
-    { title: 'Avg Rating', value: stats?.avgRating || 0, suffix: '/5', icon: Target, color: 'green' },
-    { title: 'Completion', value: stats?.completionRate || 0, suffix: '%', icon: CheckCircle, color: 'teal' }
-  ];
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
-  const getRatingColor = (rating) => {
-    if (rating >= 4) return 'text-green-700 bg-green-100';
-    if (rating >= 3) return 'text-yellow-700 bg-yellow-100';
-    if (rating >= 2) return 'text-orange-700 bg-orange-100';
-    return 'text-red-700 bg-red-100';
-  };
+  // Derived chart datasets from the real summary shape
+  const quarterlySeries = useMemo(() => {
+    const src = summary?.quarterly_trend || [];
+    return src.map((q) => ({
+      quarter: q.quarter,
+      actual: parseFloat(q.actual) || 0,
+      target: parseFloat(q.target) || 0,
+      achievement: parseFloat(q.achievement_pct) || 0,
+    }));
+  }, [summary]);
 
-  const COLORS = ['#22c55e', '#10b981', '#eab308', '#f97316', '#ef4444'];
+  const priorityChart = useMemo(() => {
+    const src = (summary?.priority_areas || []).filter((p) => p.annual_target > 0);
+    return src.map((p) => ({
+      name: p.name.length > 26 ? p.name.slice(0, 23) + '…' : p.name,
+      achievement: parseFloat(p.achievement_pct) || 0,
+    }));
+  }, [summary]);
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-96">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
-        <p className="text-gray-500 text-sm">Loading dashboard...</p>
+  const activityMix = useMemo(() => {
+    const projects = recentActivities.filter((a) => a.activity_type === 'project').length;
+    const programs = recentActivities.filter((a) => a.activity_type === 'program').length;
+    // fall back to all visible activities counts if needed
+    const src = summary?.overall || {};
+    return [
+      { name: 'Projects', value: projects || 0 },
+      { name: 'Programs', value: programs || 0 },
+    ];
+  }, [recentActivities, summary]);
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="h-24 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-700 animate-pulse" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-20 bg-white rounded-2xl border border-gray-200 animate-pulse" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="h-64 bg-white rounded-2xl border border-gray-200 animate-pulse" />
+          <div className="h-64 bg-white rounded-2xl border border-gray-200 animate-pulse" />
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  const overall = summary?.overall || {};
+  const elapsed = summary?.elapsed_pct ?? 0;
+  const achievement = parseFloat(overall.achievement_pct) || 0;
+  const projected = parseFloat(overall.projected_year_end_pct) || 0;
+  const statusCounts = overall.status_counts || {};
+
+  const kpis = [
+    { label: 'Departments',  value: counts.departments,  icon: Building2,  tone: 'bg-blue-50 text-blue-700' },
+    { label: 'Agencies',     value: counts.agencies,     icon: Landmark,   tone: 'bg-cyan-50 text-cyan-700' },
+    { label: 'Priority Areas', value: counts.priorityAreas, icon: Layers,  tone: 'bg-purple-50 text-purple-700' },
+    { label: 'Deliverables', value: counts.deliverables, icon: Package,    tone: 'bg-emerald-50 text-emerald-700' },
+    { label: 'Indicators',   value: counts.indicators,   icon: Target,     tone: 'bg-indigo-50 text-indigo-700' },
+    { label: 'Activities',   value: summary?.overall?.activities_count ?? recentActivities.length, icon: TrendingUp, tone: 'bg-orange-50 text-orange-700' },
+    { label: 'Achievement',  value: fmt(achievement), suffix: '%', icon: Gauge, tone: 'bg-emerald-50 text-emerald-700' },
+    { label: 'Projected',    value: fmt(projected),   suffix: '%', icon: CheckCircle2, tone: 'bg-teal-50 text-teal-700' },
+  ];
 
   return (
     <div className="space-y-4">
-      {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-green-600 to-green-700 rounded-xl p-4 text-white relative overflow-hidden shadow-sm">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-        <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
-        <div className="relative z-10">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold">Welcome Back! 👋</h2>
-              <p className="text-green-100 text-xs mt-0.5">Federal Ministry of Environment - Performance Dashboard</p>
-            </div>
-            <div className="flex gap-2">
-              {isAdmin && (
-                <Link to="/dashboard/initiatives/new" className="bg-white/20 hover:bg-white/30 backdrop-blur-sm px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1">
-                  <Plus className="w-3 h-3" /> New Initiative
-                </Link>
+      {/* Welcome banner */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-teal-600 p-5 text-white shadow-lg">
+        <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-white/10 blur-2xl" />
+        <div className="absolute -bottom-10 -left-10 w-40 h-40 rounded-full bg-white/10 blur-2xl" />
+        <div className="relative flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg sm:text-xl font-bold truncate">
+              Welcome back, {user?.first_name || 'User'} 👋
+            </h2>
+            <p className="text-emerald-100 text-xs sm:text-sm mt-0.5">
+              Federal Ministry of Environment · Performance Dashboard
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+              {userRole && (
+                <span className="bg-white/20 backdrop-blur px-2 py-0.5 rounded-full capitalize">
+                  {userRole.replace('_', ' ')}
+                </span>
               )}
-              <button onClick={fetchDashboardData} className="bg-white/20 hover:bg-white/30 backdrop-blur-sm p-1.5 rounded-lg transition">
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
+              <span className="bg-white/15 backdrop-blur px-2 py-0.5 rounded-full">
+                Year {selectedYear}
+              </span>
+              {elapsed > 0 && (
+                <span className="bg-white/15 backdrop-blur px-2 py-0.5 rounded-full">
+                  {fmt(elapsed)}% of year elapsed
+                </span>
+              )}
             </div>
           </div>
-          {/* Initiative Type Toggle */}
-          <div className="flex gap-2 mt-3">
-            <button 
-              onClick={() => setInitiativeType('all')}
-              className={`text-xs px-2 py-1 rounded-lg transition ${initiativeType === 'all' ? 'bg-white/30' : 'bg-white/10 hover:bg-white/20'}`}
-            >
-              All ({stats?.totalInitiatives || 0})
-            </button>
-            <button 
-              onClick={() => setInitiativeType('project')}
-              className={`text-xs px-2 py-1 rounded-lg transition ${initiativeType === 'project' ? 'bg-white/30' : 'bg-white/10 hover:bg-white/20'}`}
-            >
-              Projects ({stats?.totalProjects || 0})
-            </button>
-            <button 
-              onClick={() => setInitiativeType('program')}
-              className={`text-xs px-2 py-1 rounded-lg transition ${initiativeType === 'program' ? 'bg-white/30' : 'bg-white/10 hover:bg-white/20'}`}
-            >
-              Programs ({stats?.totalPrograms || 0})
-            </button>
-          </div>
+          <button
+            onClick={fetchDashboardData}
+            className="bg-white/20 hover:bg-white/30 p-2 rounded-xl transition shrink-0"
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
-        {statCards.map((stat, idx) => {
-          const Icon = stat.icon;
-          return (
-            <div key={idx} className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-all">
-              <div className="flex items-center justify-between mb-2">
-                <div className={`bg-${stat.color}-100 p-1.5 rounded-lg`}>
-                  <Icon className={`w-3.5 h-3.5 text-${stat.color}-600`} />
-                </div>
-              </div>
-              <p className="text-xl font-bold text-gray-900">
-                {stat.value}{stat.suffix && <span className="text-xs text-gray-500 ml-0.5">{stat.suffix}</span>}
-              </p>
-              <p className="text-xs text-gray-500 mt-0.5">{stat.title}</p>
-            </div>
-          );
-        })}
+      {error && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+          <div className="text-sm">
+            <p className="font-semibold text-amber-900">Couldn't load all dashboard data</p>
+            <p className="text-amber-800 mt-0.5">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+        {kpis.map((k) => (
+          <KpiTile key={k.label} {...k} />
+        ))}
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Performance Trend */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-                <TrendingUp className="w-3.5 h-3.5 text-green-600" />
-                Quarterly Performance Trend
-              </h3>
-            </div>
-            {availableYears.length > 0 && (
-              <select value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white">
-                {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+      {/* Charts row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card
+          title="Quarterly performance"
+          className="lg:col-span-2"
+          action={
+            availableYears.length > 0 && (
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white"
+              >
+                {availableYears.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
               </select>
-            )}
-          </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={quarterlyData}>
-              <defs>
-                <linearGradient id="colorRating" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="quarter" tick={{ fontSize: 11 }} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
-              <Area type="monotone" dataKey="avgRating" stroke="#22c55e" fillOpacity={1} fill="url(#colorRating)" name="Achievement %" />
-              <Bar dataKey="initiatives" fill="#eab308" radius={[2, 2, 0, 0]} name="Initiatives" opacity={0.6} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+            )
+          }
+        >
+          {quarterlySeries.some((q) => q.actual > 0 || q.target > 0) ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={quarterlySeries}>
+                <defs>
+                  <linearGradient id="gActualDash" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.45} />
+                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="quarter" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Legend />
+                <Area type="monotone" dataKey="actual" name="Actual" stroke="#10b981" strokeWidth={2} fill="url(#gActualDash)" />
+                <Line type="monotone" dataKey="target" name="Target" stroke="#94a3b8" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart label="No quarterly progress for this year yet" />
+          )}
+        </Card>
 
-        {/* Performance Distribution */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-1.5">
-            <Target className="w-3.5 h-3.5 text-green-600" />
-            Rating Distribution
-          </h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie data={stats?.ratingDistribution || []} cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={2} dataKey="value" label={({ percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={false}>
-                {(stats?.ratingDistribution || []).map((entry, idx) => <Cell key={idx} fill={COLORS[idx % COLORS.length]} />)}
-              </Pie>
-              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
+        <Card title="Activity mix (recent)">
+          {activityMix.some((a) => a.value > 0) ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie
+                  data={activityMix}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  innerRadius={45}
+                  dataKey="value"
+                  nameKey="name"
+                  label={({ name, value }) => `${name}: ${value}`}
+                >
+                  {activityMix.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart label="No recent activities to summarize" />
+          )}
+        </Card>
       </div>
 
-      {/* Department Performance */}
-      {departmentPerformance.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-1.5">
-            <Building2 className="w-3.5 h-3.5 text-green-600" />
-            Department Rankings
-          </h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={departmentPerformance} layout="vertical" margin={{ left: 70, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} />
-              <YAxis type="category" dataKey="name" width={65} tick={{ fontSize: 10 }} />
-              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(value) => [`${value}%`, 'Achievement']} labelFormatter={(label) => departmentPerformance.find(d => d.name === label)?.fullName || label} />
-              <Bar dataKey="avgRating" fill="#22c55e" radius={[0, 4, 4, 0]} name="Achievement %" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      {/* Priority areas + status */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card title="Priority area achievement" className="lg:col-span-2">
+          {priorityChart.length > 0 ? (
+            <ResponsiveContainer width="100%" height={Math.max(220, priorityChart.length * 40)}>
+              <BarChart data={priorityChart} layout="vertical" margin={{ left: 160, right: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 10 }} interval={0} />
+                <Tooltip formatter={(v) => `${fmt(v)}%`} />
+                <Bar dataKey="achievement" radius={[0, 4, 4, 0]}>
+                  {priorityChart.map((row, i) => (
+                    <Cell key={i} fill={row.achievement >= elapsed ? '#10b981' : '#f97316'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart label="No priority-area progress for this year" />
+          )}
+        </Card>
 
-      {/* Agency Performance */}
-      {agencyPerformance.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-1.5">
-            <Landmark className="w-3.5 h-3.5 text-green-600" />
-            Agency Rankings
-          </h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={agencyPerformance} layout="vertical" margin={{ left: 70, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} />
-              <YAxis type="category" dataKey="name" width={65} tick={{ fontSize: 10 }} />
-              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(value) => [`${value}%`, 'Achievement']} labelFormatter={(label) => agencyPerformance.find(a => a.name === label)?.fullName || label} />
-              <Bar dataKey="avgRating" fill="#06b6d4" radius={[0, 4, 4, 0]} name="Achievement %" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+        <Card title="Quarter status mix">
+          {Object.keys(statusCounts).length > 0 ? (
+            <div className="space-y-2">
+              {Object.entries(statusCounts).map(([status, count]) => {
+                const meta = STATUS_STYLES[status] || STATUS_STYLES.planning;
+                return (
+                  <div key={status} className="flex items-center justify-between text-sm">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${meta.cls}`}>
+                      {meta.label}
+                    </span>
+                    <span className="font-bold text-gray-900">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyChart label="No status data for this year" />
+          )}
+        </Card>
+      </div>
 
-      {/* Recent Initiatives */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between p-3 border-b border-gray-200">
-          <div className="flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-green-600" />
-            <h3 className="text-sm font-semibold text-gray-900">Recent Initiatives</h3>
-          </div>
-          <Link to="/dashboard/initiatives" className="text-green-600 hover:text-green-700 text-xs font-medium flex items-center gap-1">
-            View All <Eye className="w-3 h-3" />
+      {/* Recent activities */}
+      <Card
+        title="Recent activities"
+        action={
+          <Link
+            to={isSectorExpert ? '/dashboard/pending-assessments' : '/dashboard/activities'}
+            className="text-emerald-700 hover:text-emerald-800 text-xs font-semibold flex items-center gap-1"
+          >
+            View all <Eye className="w-3.5 h-3.5" />
           </Link>
-        </div>
-        {recentInitiatives.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr className="text-xs">
-                  <th className="text-left py-2 px-3 font-semibold text-gray-600">Title</th>
-                  <th className="text-left py-2 px-3 font-semibold text-gray-600 hidden md:table-cell">Type</th>
-                  <th className="text-left py-2 px-3 font-semibold text-gray-600 hidden lg:table-cell">Department/Agency</th>
-                  <th className="text-left py-2 px-3 font-semibold text-gray-600">Timeline</th>
-                  <th className="text-left py-2 px-3 font-semibold text-gray-600 hidden lg:table-cell">Target</th>
-                  <th className="text-left py-2 px-3 font-semibold text-gray-600 hidden lg:table-cell">Actual</th>
-                  <th className="text-left py-2 px-3 font-semibold text-gray-600">Rating</th>
+        }
+      >
+        {recentActivities.length === 0 ? (
+          <EmptyChart label="No activities yet" />
+        ) : (
+          <div className="overflow-x-auto -mx-4 px-4">
+            <table className="w-full text-sm min-w-[520px]">
+              <thead>
+                <tr className="text-[11px] text-gray-500 border-b border-gray-100">
+                  <th className="text-left py-2 px-2">Title</th>
+                  <th className="text-left py-2 px-2 hidden md:table-cell">Type</th>
+                  <th className="text-left py-2 px-2">Status</th>
+                  <th className="text-left py-2 px-2">Performance</th>
                 </tr>
               </thead>
               <tbody>
-                {recentInitiatives.map((initiative, idx) => (
-                  <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50 transition cursor-pointer" onClick={() => navigate(`/dashboard/initiatives/${initiative.id}`)}>
-                    <td className="py-2 px-3">
-                      <div className="font-medium text-gray-900 text-xs line-clamp-1">{initiative.title}</div>
-                    </td>
-                    <td className="py-2 px-3 text-gray-600 text-xs hidden md:table-cell">
-                      <span className={`inline-flex px-1.5 py-0.5 rounded-full text-xs font-medium ${initiative.initiative_type === 'project' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                        {initiative.initiative_type === 'project' ? 'Project' : 'Program'}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-gray-600 text-xs hidden lg:table-cell">{initiative.department_name || initiative.agency_name || '-'}</td>
-                    <td className="py-2 px-3 text-gray-600 text-xs">{new Date(initiative.start_date).getFullYear()} • Q{Math.ceil(new Date(initiative.start_date).getMonth() / 3) + 1}</td>
-                    <td className="py-2 px-3 text-gray-600 text-xs hidden lg:table-cell">{initiative.target_value || '-'} {initiative.unit_of_measure || ''}</td>
-                    <td className="py-2 px-3 text-gray-600 text-xs hidden lg:table-cell">{initiative.actual_value || '-'} {initiative.unit_of_measure || ''}</td>
-                    <td className="py-2 px-3">
-                      {initiative.performance_rating ? (
-                        <span className={`inline-flex px-1.5 py-0.5 rounded-full text-xs font-medium ${getRatingColor(initiative.performance_rating)}`}>
-                          {initiative.performance_rating}/5
-                        </span>
-                      ) : <span className="text-xs text-gray-400">—</span>}
-                    </td>
-                  </tr>
-                ))}
+                {recentActivities.map((a) => {
+                  const perf = parseFloat(a.overall_performance) || 0;
+                  return (
+                    <tr
+                      key={a.id}
+                      className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition"
+                      onClick={() => navigate(`/dashboard/activities/${a.id}`)}
+                    >
+                      <td className="py-2.5 px-2 text-xs text-gray-900 max-w-xs truncate">{a.title}</td>
+                      <td className="py-2.5 px-2 text-xs capitalize text-gray-600 hidden md:table-cell">
+                        {a.activity_type}
+                      </td>
+                      <td className="py-2.5 px-2">
+                        <StatusBadge status={a.status} />
+                      </td>
+                      <td className="py-2.5 px-2">
+                        {perf > 0 ? (
+                          <div className="flex items-center gap-2 min-w-[110px]">
+                            <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${
+                                  perf >= 80 ? 'bg-emerald-500' : perf >= 50 ? 'bg-amber-500' : 'bg-red-500'
+                                }`}
+                                style={{ width: `${Math.min(perf, 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-[11px] font-semibold text-gray-700 w-10 text-right">
+                              {fmt(perf, 0)}%
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="p-6 text-center">
-            <p className="text-gray-500 text-sm">No initiatives yet</p>
-            {isAdmin && (
-              <Link to="/dashboard/initiatives/new" className="inline-flex items-center gap-1 text-green-600 text-xs mt-2">
-                <Plus className="w-3 h-3" /> Create first initiative
-              </Link>
-            )}
-          </div>
         )}
-      </div>
+      </Card>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-3 gap-3">
-        {isAdmin && (
-          <Link to="/dashboard/initiatives/new" className="bg-green-50 rounded-lg p-3 border border-green-200 hover:shadow-sm transition group">
-            <div className="flex items-center gap-2">
-              <div className="bg-green-600 p-1.5 rounded-lg"><Plus className="w-3.5 h-3.5 text-white" /></div>
-              <div><h4 className="font-semibold text-gray-900 text-xs">New Initiative</h4><p className="text-gray-500 text-xs hidden sm:block">Add project/program</p></div>
-            </div>
-          </Link>
+      {/* Quick actions */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {isProjectAdmin && (
+          <QuickAction
+            to="/dashboard/activities/new"
+            icon={Plus}
+            title="New activity"
+            tone="from-emerald-500 to-green-600"
+          />
         )}
-        
-        <Link to="/dashboard/reports" className="bg-blue-50 rounded-lg p-3 border border-blue-200 hover:shadow-sm transition group">
-          <div className="flex items-center gap-2">
-            <div className="bg-blue-600 p-1.5 rounded-lg"><Download className="w-3.5 h-3.5 text-white" /></div>
-            <div><h4 className="font-semibold text-gray-900 text-xs">Reports</h4><p className="text-gray-500 text-xs hidden sm:block">Export data</p></div>
-          </div>
-        </Link>
-        
-        <Link to="/dashboard/departments" className="bg-purple-50 rounded-lg p-3 border border-purple-200 hover:shadow-sm transition group">
-          <div className="flex items-center gap-2">
-            <div className="bg-purple-600 p-1.5 rounded-lg"><Building2 className="w-3.5 h-3.5 text-white" /></div>
-            <div><h4 className="font-semibold text-gray-900 text-xs">Hierarchy</h4><p className="text-gray-500 text-xs hidden sm:block">Manage structure</p></div>
-          </div>
-        </Link>
+        {isDeliveryOfficer && (
+          <QuickAction
+            to="/dashboard/my-tasks"
+            icon={Activity}
+            title="My tasks"
+            tone="from-blue-500 to-indigo-600"
+          />
+        )}
+        {isSectorExpert && (
+          <QuickAction
+            to="/dashboard/pending-assessments"
+            icon={Award}
+            title="Assessments"
+            tone="from-purple-500 to-fuchsia-600"
+          />
+        )}
+        {isDirector && (
+          <QuickAction
+            to="/dashboard/pending-approvals"
+            icon={CheckCircle2}
+            title="Approvals"
+            tone="from-amber-500 to-orange-600"
+          />
+        )}
+        <QuickAction
+          to="/dashboard/reports"
+          icon={TrendingUp}
+          title="Reports"
+          tone="from-sky-500 to-cyan-600"
+        />
       </div>
     </div>
   );
 };
+
+const QuickAction = ({ to, icon: Icon, title, tone }) => (
+  <Link
+    to={to}
+    className="group relative overflow-hidden rounded-2xl bg-white border border-gray-200/80 shadow-sm hover:shadow-md transition p-3 flex items-center gap-3"
+  >
+    <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${tone} text-white flex items-center justify-center shrink-0 group-hover:scale-105 transition`}>
+      <Icon className="w-5 h-5" />
+    </div>
+    <p className="font-semibold text-gray-900 text-xs sm:text-sm">{title}</p>
+  </Link>
+);
 
 export default DashboardHome;
